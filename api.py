@@ -131,17 +131,14 @@ def update_task_today(payload: dict):
 
 # GYM 
 
-@app.get("/gym/log")
+# @app.get("/gym/log")
+# TODO: Implementar endpoint
 
+# @app.get("/gym/routines")
+# TODO: Implementar endpoint
 
-
-@app.get("/gym/routines")
-
-
-
-@app.get("/gym/routine/exercises")
-
-
+# @app.get("/gym/routine/exercises")
+# TODO: Implementar endpoint
 
 # PANDO
 

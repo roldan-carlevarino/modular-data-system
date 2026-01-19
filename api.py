@@ -139,9 +139,8 @@ def get_gym_log():
     cur.execute("""
         SELECT
             gym_routine.id,
-            gym_routine.name,
+            gym_routine.routine,
             gym_log.date,
-            gym_log.completed
         FROM gym_log 
         JOIN gym_routine ON gym_routine.id = gym_log.routine_id
         ORDER BY gym_log.date DESC, gym_routine.id;

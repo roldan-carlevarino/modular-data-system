@@ -131,7 +131,35 @@ def update_task_today(payload: dict):
 
 # GYM 
 
-# @app.get("/gym/log")
+@app.get("/gym/log")
+def get_gym_log():
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            gym_routine.id,
+            gym_routine.name,
+            gym_log.date,
+            gym_log.completed
+        FROM gym_log 
+        JOIN gym_routine ON gym_routine.id = gym_log.routine_id
+        ORDER BY gym_log.date DESC, gym_routine.id;
+    """)
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return [
+        {
+            "routine_id": r[0],
+            "name": r[1],
+            "date": r[2].isoformat(),
+            "completed": r[3]
+        }
+        for r in rows
+    ]
 # TODO: Implementar endpoint
 
 # @app.get("/gym/routines")

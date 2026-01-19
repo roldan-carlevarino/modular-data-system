@@ -28,23 +28,23 @@ print("API DATABASE:", os.getenv("TASKS_URL"))
 def health():
     return {"status": "ok"}
 
-@app.get("/task-log")
+@app.get("/task/log")
 def get_task_log():
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
     cur.execute("""
         SELECT
-            t.id,
-            t.name,
-            l.date,
-            l.weekday,
-            l.completed
-        FROM task_log l
-        JOIN tasks t ON t.id = l.task_id
-        ORDER BY l.date DESC, t.id;
-    """)
-
+            task.id,
+            task.name,
+            task_log.date,
+            task_log.weekday,
+            task_log.completed
+        FROM task_log
+        JOIN task ON task.id = task_log.task_id
+        ORDER BY task_log.date DESC, task.id;
+    """
+)
     rows = cur.fetchall()
 
     cur.close()
@@ -61,7 +61,7 @@ def get_task_log():
         for r in rows
     ]
 
-@app.get("/tasks/today")
+@app.get("/task/log/today")
 def get_tasks_today():
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
@@ -71,15 +71,15 @@ def get_tasks_today():
 
         cur.execute("""
             SELECT
-                t.id,
-                t.name,
-                l.date,
-                l.weekday,
-                l.completed
-            FROM task_log l
-            JOIN tasks t ON t.id = l.task_id
-            WHERE l.date = %s
-            ORDER BY t.id;
+                task.id,
+                task.name,
+                task_log.date,
+                task_log.weekday,
+                task_log.completed
+            FROM task_log 
+            JOIN task ON task.id = task_log.task_id
+            WHERE task_log.date = %s
+            ORDER BY task.id;
         """, (today,))
 
         rows = cur.fetchall()
@@ -104,7 +104,7 @@ def get_tasks_today():
 
 # REVISAR ESTO
 
-@app.post("/tasks/today")
+@app.post("/tasks/log/today/status")
 def update_task_today(payload: dict):
 
     task_id = int(payload["task_id"])
@@ -128,7 +128,23 @@ def update_task_today(payload: dict):
 
     return {"ok": True}
 
+
+# GYM 
+
+@app.get("/gym/log")
+
+
+
+@app.get("/gym/routines")
+
+
+
+@app.get("/gym/routine/exercises")
+
+
+
 # PANDO
+
 
 DECAY_RATE = 1
 MAX_LOVE = 100

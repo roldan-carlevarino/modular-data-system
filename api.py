@@ -218,24 +218,66 @@ def change_state(pomodoro_id: int, new_type: str):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
+    # 1️⃣ Obtener evento activo actual
     cur.execute("""
-        UPDATE pomodoro_event
-        SET finished = %s
+        SELECT id, type, started, remaining_seconds
+        FROM pomodoro_event
         WHERE pomodoro_id = %s
           AND finished IS NULL
-    """, (now(), pomodoro_id))
+        LIMIT 1
+    """, (pomodoro_id,))
+    row = cur.fetchone()
 
+    if not row:
+        cur.close()
+        conn.close()
+        raise HTTPException(400, "No active pomodoro event")
+
+    event_id, current_type, started_at, remaining = row
+
+    # 2️⃣ Calcular tiempo consumido
+    elapsed = int((now() - started_at).total_seconds())
+    updated_remaining = max(0, remaining - elapsed)
+
+    # 3️⃣ Cerrar evento actual guardando remaining actualizado
+    cur.execute("""
+        UPDATE pomodoro_event
+        SET finished = %s,
+            remaining_seconds = %s
+        WHERE id = %s
+    """, (now(), updated_remaining, event_id))
+
+    # 4️⃣ Obtener remaining previo del bloque al que entramos
+    # (último evento de ese tipo)
+    cur.execute("""
+        SELECT remaining_seconds
+        FROM pomodoro_event
+        WHERE pomodoro_id = %s
+          AND type = %s
+        ORDER BY id DESC
+        LIMIT 1
+    """, (pomodoro_id, new_type))
+    prev = cur.fetchone()
+
+    if prev and prev[0] is not None:
+        next_remaining = prev[0]
+    else:
+        # inicialización por defecto
+        next_remaining = 3 * 60 * 60 if new_type == "study" else 30 * 60
+
+    # 5️⃣ Crear nuevo evento con remaining heredado
     cur.execute("""
         INSERT INTO pomodoro_event
-        (pomodoro_id, type, started)
-        VALUES (%s, %s, %s)
-    """, (pomodoro_id, new_type, now()))
+        (pomodoro_id, type, started, remaining_seconds)
+        VALUES (%s, %s, %s, %s)
+    """, (pomodoro_id, new_type, now(), next_remaining))
 
     conn.commit()
     cur.close()
     conn.close()
 
     return {"ok": True}
+
 
 @app.post("/pomodoro/focus")
 def change_focus(pomodoro_id: int, ref_type: str, ref_id: int):

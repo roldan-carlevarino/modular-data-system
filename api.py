@@ -139,18 +139,7 @@ def start_pomodoro(ref_type: str, ref_id: int):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
-    cur.execute("""
-    SELECT 1
-    FROM pomodoro_log
-    WHERE status = 'running'
-    LIMIT 1
-    """)
-
-    if cur.fetchone():
-        cur.close()
-        conn.close()
-        raise HTTPException(400, "Pomodoro already running")
-
+    # 1️⃣ crear pomodoro_log
     cur.execute("""
         INSERT INTO pomodoro_log (start_time, status)
         VALUES (%s, 'running')
@@ -158,23 +147,23 @@ def start_pomodoro(ref_type: str, ref_id: int):
     """, (now(),))
     pomodoro_id = cur.fetchone()[0]
 
-    cur.execute("""
-        INSERT INTO pomodoro_focus_now
-        (pomodoro_id, ref_type, ref_id, since)
-        VALUES (%s, %s, %s, %s)
-    """, (pomodoro_id, ref_type, ref_id, now()))
-
+    # 2️⃣ crear primer evento STUDY con remaining inicial
     cur.execute("""
         INSERT INTO pomodoro_event
-        (pomodoro_id, type, started)
-        VALUES (%s, 'study', %s)
-    """, (pomodoro_id, now()))
+        (pomodoro_id, type, started, remaining_seconds)
+        VALUES (%s, 'study', %s, %s)
+    """, (
+        pomodoro_id,
+        now(),
+        3 * 60 * 60   # 🔴 3 HORAS INICIALES
+    ))
 
     conn.commit()
     cur.close()
     conn.close()
 
     return {"pomodoro_id": pomodoro_id}
+
 
 @app.get("/pomodoro/current")
 def get_current_pomodoro():
@@ -218,7 +207,7 @@ def change_state(pomodoro_id: int, new_type: str):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
-    # 1️⃣ Obtener evento activo actual
+    # 1️⃣ obtener evento activo
     cur.execute("""
         SELECT id, type, started, remaining_seconds
         FROM pomodoro_event
@@ -226,29 +215,28 @@ def change_state(pomodoro_id: int, new_type: str):
           AND finished IS NULL
         LIMIT 1
     """, (pomodoro_id,))
-    row = cur.fetchone()
+    current = cur.fetchone()
 
-    if not row:
+    if not current:
         cur.close()
         conn.close()
-        raise HTTPException(400, "No active pomodoro event")
+        raise HTTPException(400, "No active event")
 
-    event_id, current_type, started_at, remaining = row
+    event_id, cur_type, started, remaining = current
 
-    # 2️⃣ Calcular tiempo consumido
-    elapsed = int((now() - started_at).total_seconds())
-    updated_remaining = max(0, remaining - elapsed)
+    # 2️⃣ calcular segundos restantes reales
+    elapsed = int((now() - started).total_seconds())
+    remaining = max(0, remaining - elapsed)
 
-    # 3️⃣ Cerrar evento actual guardando remaining actualizado
+    # 3️⃣ cerrar evento actual guardando remaining
     cur.execute("""
         UPDATE pomodoro_event
         SET finished = %s,
             remaining_seconds = %s
         WHERE id = %s
-    """, (now(), updated_remaining, event_id))
+    """, (now(), remaining, event_id))
 
-    # 4️⃣ Obtener remaining previo del bloque al que entramos
-    # (último evento de ese tipo)
+    # 4️⃣ buscar último evento del NUEVO tipo
     cur.execute("""
         SELECT remaining_seconds
         FROM pomodoro_event
@@ -259,13 +247,16 @@ def change_state(pomodoro_id: int, new_type: str):
     """, (pomodoro_id, new_type))
     prev = cur.fetchone()
 
-    if prev and prev[0] is not None:
+    if prev:
         next_remaining = prev[0]
     else:
-        # inicialización por defecto
-        next_remaining = 3 * 60 * 60 if new_type == "study" else 30 * 60
+        # 🔴 inicialización limpia
+        next_remaining = (
+            3 * 60 * 60 if new_type == "study"
+            else 30 * 60
+        )
 
-    # 5️⃣ Crear nuevo evento con remaining heredado
+    # 5️⃣ crear nuevo evento
     cur.execute("""
         INSERT INTO pomodoro_event
         (pomodoro_id, type, started, remaining_seconds)
@@ -277,7 +268,6 @@ def change_state(pomodoro_id: int, new_type: str):
     conn.close()
 
     return {"ok": True}
-
 
 @app.post("/pomodoro/focus")
 def change_focus(pomodoro_id: int, ref_type: str, ref_id: int):

@@ -1,3 +1,4 @@
+from arrow import now
 from fastapi import FastAPI, HTTPException
 import psycopg2
 import os
@@ -129,6 +130,219 @@ def update_task_today(payload: dict):
     return {"ok": True}
 
 
+#POMODORO
+@app.post("/pomodoro/start")
+def start_pomodoro(ref_type: str, ref_id: int):
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT 1
+    FROM pomodoro_log
+    WHERE status = 'running'
+    LIMIT 1
+    """)
+
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        raise HTTPException(400, "Pomodoro already running")
+
+    cur.execute("""
+        INSERT INTO pomodoro_log (start_time, status)
+        VALUES (%s, 'running')
+        RETURNING id
+    """, (now(),))
+    pomodoro_id = cur.fetchone()[0]
+
+    cur.execute("""
+        INSERT INTO pomodoro_focus_now
+        (pomodoro_id, ref_type, ref_id, since)
+        VALUES (%s, %s, %s, %s)
+    """, (pomodoro_id, ref_type, ref_id, now()))
+
+    cur.execute("""
+        INSERT INTO pomodoro_event
+        (pomodoro_id, type, started)
+        VALUES (%s, 'study', %s)
+    """, (pomodoro_id, now()))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"pomodoro_id": pomodoro_id}
+
+@app.get("/pomodoro/current")
+def get_current_pomodoro():
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            id,
+            start_time,
+            end_time,
+            status
+        FROM pomodoro_log
+        ORDER BY start_time DESC
+        LIMIT 1;
+    """)
+    row = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="No pomodoro found")
+
+    pomodoro_id, start_time, end_time, status = row
+
+    return {
+        "id": pomodoro_id,
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat() if end_time else None,
+        "status": status,
+        "completed": status == "ended"
+    }
+
+
+@app.post("/pomodoro/state")
+def change_state(pomodoro_id: int, new_type: str):
+    if new_type not in ("study", "rest"):
+        raise HTTPException(400, "Invalid state")
+
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE pomodoro_event
+        SET finished = %s
+        WHERE pomodoro_id = %s
+          AND finished IS NULL
+    """, (now(), pomodoro_id))
+
+    cur.execute("""
+        INSERT INTO pomodoro_event
+        (pomodoro_id, type, started)
+        VALUES (%s, %s, %s)
+    """, (pomodoro_id, new_type, now()))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"ok": True}
+
+@app.post("/pomodoro/focus")
+def change_focus(pomodoro_id: int, ref_type: str, ref_id: int):
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE pomodoro_focus_now
+        SET ref_type = %s,
+            ref_id = %s,
+            since = %s
+        WHERE pomodoro_id = %s
+    """, (ref_type, ref_id, now(), pomodoro_id))
+
+    # opcional: registrar contenido
+    cur.execute("""
+        INSERT INTO pomodoro_content
+        (pomodoro_id, ref_type, ref_id, weight)
+        VALUES (%s, %s, %s, 1)
+        ON CONFLICT DO NOTHING
+    """, (pomodoro_id, ref_type, ref_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"ok": True}
+
+@app.post("/pomodoro/end")
+def end_pomodoro(pomodoro_id: int):
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE pomodoro_event
+        SET finished = %s
+        WHERE pomodoro_id = %s
+          AND finished IS NULL
+    """, (now(), pomodoro_id))
+
+    cur.execute("""
+        DELETE FROM pomodoro_focus_now
+        WHERE pomodoro_id = %s
+    """, (pomodoro_id,))
+
+    cur.execute("""
+        UPDATE pomodoro_log
+        SET status = 'ended', end_time = %s
+        WHERE id = %s
+    """, (now(), pomodoro_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"ok": True}
+
+@app.get("/pomodoro/status")
+def current_pomodoro_status():
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id
+        FROM pomodoro_log
+        WHERE status = 'running'
+        ORDER BY start_time DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    
+    if not row:
+        cur.close()
+        conn.close()
+        return None
+
+    pomodoro_id = row[0]
+
+    cur.execute("""
+        SELECT ref_type, ref_id, since
+        FROM pomodoro_focus_now
+        WHERE pomodoro_id = %s
+    """, (pomodoro_id,))
+    focus = cur.fetchone()
+
+    cur.execute("""
+        SELECT type, started
+        FROM pomodoro_event
+        WHERE pomodoro_id = %s
+          AND finished IS NULL
+    """, (pomodoro_id,))
+    event = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    return {
+        "pomodoro_id": pomodoro_id,
+        "focus_now": {
+            "ref_type": focus[0],
+            "ref_id": focus[1],
+            "since": focus[2]
+        } if focus else None,
+        "state": {
+            "type": event[0],
+            "started": event[1]
+        } if event else None
+    }
+
+
 # GYM 
 
 @app.get("/gym/log")
@@ -140,7 +354,7 @@ def get_gym_log():
         SELECT
             gym_routine.id,
             gym_routine.routine,
-            gym_log.date,
+            gym_log.date
         FROM gym_log 
         JOIN gym_routine ON gym_routine.id = gym_log.routine_id
         ORDER BY gym_log.date DESC, gym_routine.id;
@@ -154,8 +368,7 @@ def get_gym_log():
         {
             "routine_id": r[0],
             "name": r[1],
-            "date": r[2].isoformat(),
-            "completed": r[3]
+            "date": r[2].isoformat()
         }
         for r in rows
     ]

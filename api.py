@@ -1,4 +1,3 @@
-from arrow import now
 from fastapi import FastAPI, HTTPException
 import psycopg2
 import os
@@ -8,6 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from math import floor
 
 load_dotenv()
+
+def now():
+    """Returns current UTC datetime for PostgreSQL compatibility"""
+    return datetime.utcnow()
 
 app = FastAPI()
 app.add_middleware(

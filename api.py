@@ -65,7 +65,7 @@ def get_task_log():
         for r in rows
     ]
 
-@app.get("/task/log/today")
+@app.get("/task/today")
 def get_tasks_today():
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
@@ -77,12 +77,13 @@ def get_tasks_today():
             SELECT
                 task.id,
                 task.name,
-                task_log.date,
-                task_log.weekday,
-                task_log.completed
-            FROM task_log 
-            JOIN task ON task.id = task_log.task_id
-            WHERE task_log.date = %s
+                task_occurrences.date,
+                task_occurrences.weekday,
+                task_occurrences.completed,
+                task_occurrences.position
+            FROM task_occurrences 
+            JOIN task ON task.id = task_occurrences.task_id
+            WHERE task_occurrences.date = %s
             ORDER BY task.id;
         """, (today,))
 
@@ -97,7 +98,8 @@ def get_tasks_today():
                 "name": r[1],
                 "date": r[2].isoformat(),
                 "weekday": r[3],
-                "completed": r[4]
+                "completed": r[4],
+                "position": r[5]
             }
             for r in rows
         ]
@@ -106,9 +108,10 @@ def get_tasks_today():
         
         raise
 
+@app.get("/task/yesterday")
 # REVISAR ESTO
 
-@app.post("/tasks/log/today/status")
+@app.post("/tasks/today/status")
 def update_task_today(payload: dict):
 
     task_id = int(payload["task_id"])
@@ -120,7 +123,7 @@ def update_task_today(payload: dict):
     today = date.today()
 
     cur.execute("""
-        UPDATE task_log
+        UPDATE task_occurrences
         SET completed = %s
         WHERE task_id = %s
           AND date = %s;

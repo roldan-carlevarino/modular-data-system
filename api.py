@@ -78,7 +78,6 @@ def get_tasks_today():
                 task.id,
                 task.name,
                 task_occurrences.date,
-                task_occurrences.weekday,
                 task_occurrences.completed,
                 task_occurrences.position,
                 task_occurrences.occurrence
@@ -98,10 +97,9 @@ def get_tasks_today():
                 "task_id": r[0],
                 "name": r[1],
                 "date": r[2].isoformat(),
-                "weekday": r[3],
-                "completed": r[4],
-                "position": r[5],
-                "day_context": r[6]
+                "completed": r[3],
+                "position": r[4],
+                "day_context": r[5]
             }
             for r in rows
         ]

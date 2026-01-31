@@ -80,7 +80,8 @@ def get_tasks_today():
                 task_occurrences.date,
                 task_occurrences.weekday,
                 task_occurrences.completed,
-                task_occurrences.position
+                task_occurrences.position,
+                task_occurrences.occurrence
             FROM task_occurrences 
             JOIN task ON task.id = task_occurrences.task_id
             WHERE task_occurrences.date = %s
@@ -99,7 +100,8 @@ def get_tasks_today():
                 "date": r[2].isoformat(),
                 "weekday": r[3],
                 "completed": r[4],
-                "position": r[5]
+                "position": r[5],
+                "day_context": r[6]
             }
             for r in rows
         ]

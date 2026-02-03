@@ -108,10 +108,79 @@ def get_tasks_today():
         
         raise
 
+@app.patch("/task/today/move")
+def move_task_today(payload: dict):
+    task_id = int(payload["task_id"])
+    new_position = int(payload["new_position"])
+    new_occurrence = int(payload.get("new_occurrence"))
+
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    today = date.today()
+
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM task_occurrences
+        WHERE date = %s;
+    """, (today,))
+    row = cur.fetchone()
+    total_tasks = row[0]
+
+    if new_position < 1 or new_position > total_tasks:
+        cur.close()
+        conn.close()
+        raise HTTPException(400, "Invalid new position")
+
+    cur.execute("""
+        SELECT position
+        FROM task_occurrences
+        WHERE task_id = %s AND date = %s;
+    """, (task_id, today))
+    row = cur.fetchone()
+
+    if not row:
+        cur.close()
+        conn.close()
+        raise HTTPException(404, "Task not found for today")
+
+    current_position = row[0]
+
+    if current_position == new_position:
+        cur.close()
+        conn.close()
+        return {"ok": True}
+
+    if current_position < new_position:
+        cur.execute("""
+            UPDATE task_occurrences
+            SET position = position - 1
+            WHERE date = %s AND position > %s AND position <= %s;
+        """, (today, current_position, new_position))
+    else:
+        cur.execute("""
+            UPDATE task_occurrences
+            SET position = position + 1
+            WHERE date = %s AND position >= %s AND position < %s;
+        """, (today, new_position, current_position))
+
+    cur.execute("""
+        UPDATE task_occurrences
+        SET position = %s
+        WHERE task_id = %s AND date = %s;
+    """, (new_position, task_id, today))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"ok": True}
+
+
 @app.get("/task/yesterday")
 # REVISAR ESTO
 
-@app.post("/tasks/today/status")
+@app.post("/task/today/checkbox")
 def update_task_today(payload: dict):
 
     task_id = int(payload["task_id"])

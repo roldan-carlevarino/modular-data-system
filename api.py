@@ -75,7 +75,7 @@ def get_tasks_today():
 
         cur.execute("""
             SELECT
-                task.id,
+                task_occurrences.id,
                 task.name,
                 task_occurrences.date,
                 task_occurrences.completed,
@@ -84,7 +84,7 @@ def get_tasks_today():
             FROM task_occurrences 
             JOIN task ON task.id = task_occurrences.task_id
             WHERE task_occurrences.date = %s
-            ORDER BY task.id;
+            ORDER BY task_occurrences.position;
         """, (today,))
 
         rows = cur.fetchall()
@@ -194,7 +194,7 @@ def update_task_today(payload: dict):
     cur.execute("""
         UPDATE task_occurrences
         SET completed = %s
-        WHERE task_id = %s
+        WHERE id = %s
           AND date = %s;
     """, (completed, task_id, today))
 

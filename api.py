@@ -194,7 +194,7 @@ def update_task_today(payload: dict):
     cur.execute("""
         UPDATE task_occurrences
         SET completed = %s
-        WHERE id = %s
+        WHERE task_id = %s
           AND date = %s;
     """, (completed, task_id, today))
 

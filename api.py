@@ -177,7 +177,7 @@ def move_task_today(payload: dict):
     return {"ok": True}
 
 
-@app.get("/task/yesterday")
+# @app.get("/task/yesterday")
 # REVISAR ESTO
 
 @app.post("/task/today/checkbox")
@@ -194,7 +194,7 @@ def update_task_today(payload: dict):
     cur.execute("""
         UPDATE task_occurrences
         SET completed = %s
-        WHERE task_id = %s
+        WHERE id = %s
           AND date = %s;
     """, (completed, task_id, today))
 

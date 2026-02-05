@@ -110,72 +110,125 @@ def get_tasks_today():
 
 @app.patch("/task/today/move")
 def move_task_today(payload: dict):
-    task_id = int(payload["task_id"])
-    new_position = int(payload["new_position"])
-    new_occurrence = int(payload.get("new_occurrence"))
+    conn = None
+    cur = None
+    
+    try:
+        task_id = int(payload["task_id"])              # task_occurrences.id
+        before_id = payload.get("before_id")           # puede ser None
+        after_id = payload.get("after_id")             # puede ser None
+        target_occurrence = payload.get("target_occurrence")  # opcional
 
-    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
-    cur = conn.cursor()
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        today = date.today()
 
-    today = date.today()
+        STEP = 20
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM task_occurrences
-        WHERE date = %s;
-    """, (today,))
-    row = cur.fetchone()
-    total_tasks = row[0]
+        # 1️⃣ Estado PRE: leer occurrence y position reales
+        cur.execute("""
+            SELECT position, occurrence
+            FROM task_occurrences
+            WHERE id = %s
+              AND date = %s;
+        """, (task_id, today))
+        row = cur.fetchone()
 
-    if new_position < 1 or new_position > total_tasks:
-        cur.close()
-        conn.close()
-        raise HTTPException(400, "Invalid new position")
+        if not row:
+            raise HTTPException(404, "Task occurrence not found")
 
-    cur.execute("""
-        SELECT position
-        FROM task_occurrences
-        WHERE task_id = %s AND date = %s;
-    """, (task_id, today))
-    row = cur.fetchone()
+        _, old_occurrence = row
 
-    if not row:
-        cur.close()
-        conn.close()
-        raise HTTPException(404, "Task not found for today")
+        # 2️⃣ Determinar contenedor destino
+        #    (si el front no manda target_occurrence, se queda en el mismo)
+        final_occurrence = target_occurrence or old_occurrence
 
-    current_position = row[0]
+        # 3️⃣ Leer BEFORE dentro del contenedor destino
+        pos_before = None
+        if before_id is not None:
+            if before_id == task_id:
+                raise HTTPException(400, "Invalid before_id")
 
-    if current_position == new_position:
-        cur.close()
-        conn.close()
-        return {"ok": True}
+            cur.execute("""
+                SELECT position
+                FROM task_occurrences
+                WHERE id = %s
+                  AND date = %s
+                  AND occurrence = %s;
+            """, (before_id, today, final_occurrence))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(400, "before_id not valid in target occurrence")
+            pos_before = r[0]
 
-    if current_position < new_position:
+        # 4️⃣ Leer AFTER dentro del contenedor destino
+        pos_after = None
+        if after_id is not None:
+            if after_id == task_id:
+                raise HTTPException(400, "Invalid after_id")
+
+            cur.execute("""
+                SELECT position
+                FROM task_occurrences
+                WHERE id = %s
+                  AND date = %s
+                  AND occurrence = %s;
+            """, (after_id, today, final_occurrence))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(400, "after_id not valid in target occurrence")
+            pos_after = r[0]
+
+        # 5️⃣ Cálculo ÚNICO de position (vale para todos los casos)
+        if pos_before is not None and pos_after is not None:
+            new_position = (pos_before + pos_after) / 2
+        elif pos_before is not None:
+            new_position = pos_before + STEP
+        elif pos_after is not None:
+            new_position = pos_after / 2
+        else:
+            new_position = STEP
+
+        # 6️⃣ UPDATE final (estado POST)
         cur.execute("""
             UPDATE task_occurrences
-            SET position = position - 1
-            WHERE date = %s AND position > %s AND position <= %s;
-        """, (today, current_position, new_position))
-    else:
-        cur.execute("""
-            UPDATE task_occurrences
-            SET position = position + 1
-            WHERE date = %s AND position >= %s AND position < %s;
-        """, (today, new_position, current_position))
+            SET occurrence = %s,
+                position = %s
+            WHERE id = %s;
+        """, (final_occurrence, new_position, task_id))
 
-    cur.execute("""
-        UPDATE task_occurrences
-        SET position = %s
-        WHERE task_id = %s AND date = %s;
-    """, (new_position, task_id, today))
+        conn.commit()
+        
+        return {
+            "ok": True,
+            "occurrence": final_occurrence,
+            "position": new_position
+        }
+        
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Move failed: {str(e)}")
+        
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
-    conn.commit()
-    cur.close()
-    conn.close()
 
-    return {"ok": True}
 
+
+
+
+
+
+    
 
 # @app.get("/task/yesterday")
 # REVISAR ESTO

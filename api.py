@@ -94,7 +94,7 @@ def get_tasks_today():
 
         return [
             {
-                "task_id": r[0],
+                "occurrences_id": r[0],
                 "name": r[1],
                 "date": r[2].isoformat(),
                 "completed": r[3],
@@ -108,16 +108,77 @@ def get_tasks_today():
         
         raise
 
+# @app.post("/task/today/refresh_occurrences")
+# def refresh_tasks_today(payload: dict):
+#     conn = None
+#     cur = None
+    
+#     try:
+#         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+#         cur = conn.cursor()
+#         today = date.today()
+#         actual_hour = datetime.now().hour
+
+#         if actual_hour > 12 and actual_hour <= 18:
+
+#              cur.execute("""
+#                         SELECT 
+#                         o.id,
+#                         t.id,
+#                         t.intraday_spill,
+#                         t.interday_spill,
+#                         o.occurrence
+#                         FROM task t
+#                         JOIN task_occurrences o ON o.task_id = t.id
+#                         WHERE o.occurrence = 'morning' AND o.completed = false
+#                         """)
+#              rows = cur.fetchall()
+#              for task_id, id, intraday_spill, interday_spill, occurrence in rows:
+#                 if intraday_spill > 0:
+#                  cur.execute(""" UPDATE task_occurrences
+#                              SET occurrence = 'afternoon'
+#                              WHERE id = %s """, (id,))
+#                 else:
+#                     pass
+            
+                             
+
+#         if actual_hour >= 12 and actual_hour < 18:
+#              day_context = "afternoon"
+        
+#         else:
+#             day_context = "evening"
+#         cur.execute("""
+#                     SELECT
+                    
+#                     """)
+        
+        
+#         conn.commit()
+#         return {"ok": True}
+        
+#     except Exception as e:
+#         if conn:
+#             conn.rollback()
+#         raise HTTPException(500, f"Actualization failed: {str(e)}")
+        
+#     finally:
+#         if cur:
+#             cur.close()
+#         if conn:
+#             conn.close()
+
+
 @app.patch("/task/today/move")
 def move_task_today(payload: dict):
     conn = None
     cur = None
     
     try:
-        task_id = int(payload["task_id"])              # task_occurrences.id
-        before_id = payload.get("before_id")           # puede ser None
-        after_id = payload.get("after_id")             # puede ser None
-        target_occurrence = payload.get("target_occurrence")  # opcional
+        occurrences_id = int(payload["occurrences_id"])              
+        before_id = payload.get("before_id")          
+        after_id = payload.get("after_id")
+        target_occurrence = payload.get("target_occurrence")
 
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
@@ -125,13 +186,12 @@ def move_task_today(payload: dict):
 
         STEP = 20
 
-        # 1️⃣ Estado PRE: leer occurrence y position reales
         cur.execute("""
             SELECT position, occurrence
             FROM task_occurrences
             WHERE id = %s
               AND date = %s;
-        """, (task_id, today))
+        """, (occurrences_id, today))
         row = cur.fetchone()
 
         if not row:
@@ -139,14 +199,11 @@ def move_task_today(payload: dict):
 
         _, old_occurrence = row
 
-        # 2️⃣ Determinar contenedor destino
-        #    (si el front no manda target_occurrence, se queda en el mismo)
         final_occurrence = target_occurrence or old_occurrence
 
-        # 3️⃣ Leer BEFORE dentro del contenedor destino
         pos_before = None
         if before_id is not None:
-            if before_id == task_id:
+            if before_id == occurrences_id:
                 raise HTTPException(400, "Invalid before_id")
 
             cur.execute("""
@@ -161,10 +218,9 @@ def move_task_today(payload: dict):
                 raise HTTPException(400, "before_id not valid in target occurrence")
             pos_before = r[0]
 
-        # 4️⃣ Leer AFTER dentro del contenedor destino
         pos_after = None
         if after_id is not None:
-            if after_id == task_id:
+            if after_id == occurrences_id:
                 raise HTTPException(400, "Invalid after_id")
 
             cur.execute("""
@@ -179,7 +235,6 @@ def move_task_today(payload: dict):
                 raise HTTPException(400, "after_id not valid in target occurrence")
             pos_after = r[0]
 
-        # 5️⃣ Cálculo ÚNICO de position (vale para todos los casos)
         if pos_before is not None and pos_after is not None:
             new_position = (pos_before + pos_after) / 2
         elif pos_before is not None:
@@ -189,13 +244,12 @@ def move_task_today(payload: dict):
         else:
             new_position = STEP
 
-        # 6️⃣ UPDATE final (estado POST)
         cur.execute("""
             UPDATE task_occurrences
             SET occurrence = %s,
                 position = %s
             WHERE id = %s;
-        """, (final_occurrence, new_position, task_id))
+        """, (final_occurrence, new_position, occurrences_id))
 
         conn.commit()
         
@@ -236,7 +290,7 @@ def move_task_today(payload: dict):
 @app.post("/task/today/checkbox")
 def update_task_today(payload: dict):
 
-    task_id = int(payload["task_id"])
+    occurrences_id = int(payload["occurrences_id"])
     completed = bool(payload["completed"])
 
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
@@ -249,7 +303,7 @@ def update_task_today(payload: dict):
         SET completed = %s
         WHERE id = %s
           AND date = %s;
-    """, (completed, task_id, today))
+    """, (completed, occurrences_id, today))
 
     conn.commit()
     cur.close()

@@ -108,65 +108,50 @@ def get_tasks_today():
         
         raise
 
-# @app.post("/task/today/refresh_occurrences")
-# def refresh_tasks_today(payload: dict):
-#     conn = None
-#     cur = None
+@app.post("/task/today/refresh_occurrences")
+def refresh_tasks_today():
+    conn = None
+    cur = None
     
-#     try:
-#         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
-#         cur = conn.cursor()
-#         today = date.today()
-#         actual_hour = datetime.now().hour
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        
+        actual_hour = datetime.now().hour
+        today = date.today()
+        
+        # Determinar transición
+        transitions = []
+        if 12 <= actual_hour < 18:
+            transitions.append(("morning", "afternoon"))
+        if 18 <= actual_hour <= 23:
+            transitions.append(("afternoon", "evening"))
+        
+        for from_occ, to_occ in transitions:
+            cur.execute("""
+                UPDATE task_occurrences
+                SET occurrence = %s,
+                    intraday_spill = GREATEST(0, intraday_spill - 1)
+                WHERE occurrence = %s
+                  AND completed = false
+                  AND intraday_spill > 0
+                  AND date = %s
+            """, (to_occ, from_occ, today))
+        
+        conn.commit()
+        return {"ok": True, "transitions": len(transitions)}
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Refresh failed: {str(e)}")
+        
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
-#         if actual_hour > 12 and actual_hour <= 18:
-
-#              cur.execute("""
-#                         SELECT 
-#                         o.id,
-#                         t.id,
-#                         t.intraday_spill,
-#                         t.interday_spill,
-#                         o.occurrence
-#                         FROM task t
-#                         JOIN task_occurrences o ON o.task_id = t.id
-#                         WHERE o.occurrence = 'morning' AND o.completed = false
-#                         """)
-#              rows = cur.fetchall()
-#              for task_id, id, intraday_spill, interday_spill, occurrence in rows:
-#                 if intraday_spill > 0:
-#                  cur.execute(""" UPDATE task_occurrences
-#                              SET occurrence = 'afternoon'
-#                              WHERE id = %s """, (id,))
-#                 else:
-#                     pass
-            
-                             
-
-#         if actual_hour >= 12 and actual_hour < 18:
-#              day_context = "afternoon"
-        
-#         else:
-#             day_context = "evening"
-#         cur.execute("""
-#                     SELECT
-                    
-#                     """)
-        
-        
-#         conn.commit()
-#         return {"ok": True}
-        
-#     except Exception as e:
-#         if conn:
-#             conn.rollback()
-#         raise HTTPException(500, f"Actualization failed: {str(e)}")
-        
-#     finally:
-#         if cur:
-#             cur.close()
-#         if conn:
-#             conn.close()
 
 
 @app.patch("/task/today/move")

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 import psycopg2
 import os
 from dotenv import load_dotenv
@@ -896,13 +896,21 @@ def get_shopping_list():
             conn.close()
 
 @app.post("/shopping/insert_list")
-def insert_shopping_list(items: list[str]):
+def insert_shopping_list(payload = Body(...)):
     conn = None
     cur = None
     
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+
+        if isinstance(payload, dict):
+            items = payload.get("items", [])
+        else:
+            items = payload
+
+        if not isinstance(items, list):
+            raise HTTPException(400, "Invalid items payload")
 
         for item in items:
             cur.execute("""
@@ -928,13 +936,21 @@ def insert_shopping_list(items: list[str]):
             conn.close()
 
 @app.post("/shopping/delete_list")
-def delete_shopping_list(items: list[str]):
+def delete_shopping_list(payload = Body(...)):
     conn = None
     cur = None
     
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+
+        if isinstance(payload, dict):
+            items = payload.get("items", [])
+        else:
+            items = payload
+
+        if not isinstance(items, list):
+            raise HTTPException(400, "Invalid items payload")
 
         for item in items:
             cur.execute("""

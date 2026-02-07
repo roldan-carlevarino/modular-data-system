@@ -914,12 +914,12 @@ def insert_shopping_list(payload = Body(...)):
 
         for item in items:
             cur.execute("""
-                INSERT INTO shopping_list
-                (item)
-                VALUES (%s)
-                ON CONFLICT (item)
-                DO NOTHING;
-            """, (item,))
+                INSERT INTO shopping_list (item)
+                SELECT %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM shopping_list WHERE item = %s
+                );
+            """, (item, item))
 
         conn.commit()
         return {"ok": True}

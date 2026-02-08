@@ -734,14 +734,13 @@ def recalc_love(love_level: int, last_updated_at: datetime):
 @app.get("/pando/love")
 def get_pando_love():
     try:
-        # 1️⃣ Conectar a la DB
+
         conn = psycopg2.connect(
             os.getenv("TASKS_URL"),
             sslmode="require"
         )
         cur = conn.cursor()
 
-        # 2️⃣ Leer estado actual
         cur.execute("""
             SELECT love_level, last_updated_at
             FROM pando_resources
@@ -754,10 +753,8 @@ def get_pando_love():
 
         love_level, last_updated_at = row
 
-        # 3️⃣ Recalcular amor (lazy decay)
         love, now = recalc_love(love_level, last_updated_at)
 
-        # 4️⃣ Guardar nuevo estado
         cur.execute("""
             UPDATE pando_resources
             SET love_level = %s, last_updated_at = %s
@@ -765,18 +762,15 @@ def get_pando_love():
         """, (love, now))
         conn.commit()
 
-        # 5️⃣ Cerrar conexión
         cur.close()
         conn.close()
 
-        # 6️⃣ Mood derivado (NO se guarda)
         mood = (
             "happy" if love >= 70 else
             "neutral" if love >= 40 else
             "sad"
         )
 
-        # 7️⃣ Respuesta
         return {
             "love": love,
             "mood": mood,
@@ -971,3 +965,32 @@ def delete_shopping_list(payload = Body(...)):
             cur.close()
         if conn:
             conn.close()
+
+@app.get("/knowledge/concept/{concept_id}")
+def get_concept(concept_id: int):
+    conn = psycopg2.connect(os.getenv("DB_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT block_type, content
+        FROM knowledge_blocks
+        WHERE concept_id = %s
+          AND project_id IS NULL
+          AND mode IS NULL
+          AND reviewed = TRUE
+        ORDER BY
+          CASE block_type
+            WHEN 'definition' THEN 1
+            WHEN 'intuition'  THEN 2
+            WHEN 'formula'    THEN 3
+            WHEN 'example'    THEN 4
+            WHEN 'warning'    THEN 5
+            ELSE 99
+          END,
+          priority DESC
+    """, (concept_id,))
+
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    return [{"type": r[0], "content": r[1]} for r in rows]

@@ -1139,7 +1139,6 @@ def get_knowledge_concepts(project_id: Optional[int] = None):
             cur.execute("""
                 SELECT id, name, parent_concept_id
                 FROM knowledge_concepts
-                WHERE active = TRUE
                 ORDER BY parent_concept_id NULLS FIRST, name
             """)
         else:
@@ -1153,8 +1152,7 @@ def get_knowledge_concepts(project_id: Optional[int] = None):
                      ON b.concept_id = c.id
                 JOIN knowledge_block_projects bp
                      ON bp.block_id = b.id
-                WHERE c.active = TRUE
-                  AND b.reviewed = TRUE
+                 WHERE b.reviewed = TRUE
                   AND bp.project_id = %(project_id)s
                 ORDER BY c.parent_concept_id NULLS FIRST, c.name
             """, {"project_id": project_id})

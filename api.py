@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Query
 import psycopg2
 import os
 from dotenv import load_dotenv
 from datetime import date, datetime
 from fastapi.middleware.cors import CORSMiddleware
 from math import floor
+from typing import List, Optional
 
 load_dotenv()
 
@@ -994,3 +995,188 @@ def get_concept(concept_id: int):
     cur.close(); conn.close()
 
     return [{"type": r[0], "content": r[1]} for r in rows]
+
+
+app.get("/knowledge/viewer")
+def knowledge_viewer(payload: dict):
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT name, content
+        FROM knowledge_blocks
+        WHERE concept_id = %s, block_type = %s, project_id %s, mode %s, reviewed = TRUE
+        ORDER BY priority DESC;
+    """, (payload.get("concept_id"), payload.get("block_type"), payload.get("project_id"), payload.get("mode")))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    return [{"name": r[0], "content": r[1]} for r in rows]
+
+@app.get("/knowledge/query")
+def knowledge_query(
+    concept_id: int,
+    mode: Optional[str] = None,
+    project_id: Optional[int] = None,
+    block_type: Optional[List[str]] = Query(default=None)
+):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        if block_type is not None and len(block_type) == 0:
+            block_type = None
+
+        cur.execute("""
+            SELECT DISTINCT
+                b.id,
+                b.block_type,
+                b.content,
+                b.mode,
+                b.exercise_id,
+                b.position,
+                b.depends_on_block_id
+            FROM knowledge_blocks b
+            LEFT JOIN knowledge_block_projects bp
+                   ON bp.block_id = b.id
+            WHERE b.concept_id = %(concept_id)s
+              AND b.reviewed = TRUE
+              AND (
+                    %(mode)s IS NULL
+                    OR b.mode = %(mode)s
+                    OR b.mode IS NULL
+                  )
+              AND (
+                    %(project_id)s IS NULL
+                    OR bp.project_id = %(project_id)s
+                  )
+              AND (
+                    %(block_types)s IS NULL
+                    OR b.block_type = ANY (%(block_types)s)
+                  )
+            ORDER BY
+                b.exercise_id NULLS LAST,
+                b.position NULLS LAST,
+                b.id;
+        """, {
+            "concept_id": concept_id,
+            "mode": mode,
+            "project_id": project_id,
+            "block_types": block_type
+        })
+
+        rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "block_type": r[1],
+                "content": r[2],
+                "mode": r[3],
+                "exercise_id": r[4],
+                "position": r[5],
+                "depends_on_block_id": r[6]
+            }
+            for r in rows
+        ]
+
+    except Exception as e:
+        raise HTTPException(500, f"Knowledge query failed: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+@app.get("/knowledge/projects")
+def get_knowledge_projects():
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, name, parent_id
+            FROM projects
+            ORDER BY name;
+        """)
+        rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "parent_id": r[2]
+            }
+            for r in rows
+        ]
+
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get knowledge projects: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+@app.get("/knowledge/concepts")
+def get_knowledge_concepts(project_id: Optional[int] = None):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        if project_id is None:
+            cur.execute("""
+                SELECT id, name, parent_concept_id
+                FROM knowledge_concepts
+                WHERE active = TRUE
+                ORDER BY parent_concept_id NULLS FIRST, name
+            """)
+        else:
+            cur.execute("""
+                SELECT DISTINCT
+                    c.id,
+                    c.name,
+                    c.parent_concept_id
+                FROM knowledge_concepts c
+                JOIN knowledge_blocks b
+                     ON b.concept_id = c.id
+                JOIN knowledge_block_projects bp
+                     ON bp.block_id = b.id
+                WHERE c.active = TRUE
+                  AND b.reviewed = TRUE
+                  AND bp.project_id = %(project_id)s
+                ORDER BY c.parent_concept_id NULLS FIRST, c.name
+            """, {"project_id": project_id})
+
+        rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "parent_concept_id": r[2]
+            }
+            for r in rows
+        ]
+
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get knowledge concepts: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+

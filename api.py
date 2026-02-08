@@ -978,15 +978,6 @@ def get_concept(concept_id: int):
           AND project_id IS NULL
           AND mode IS NULL
           AND reviewed = TRUE
-        ORDER BY
-          CASE block_type
-            WHEN 'definition' THEN 1
-            WHEN 'intuition'  THEN 2
-            WHEN 'formula'    THEN 3
-            WHEN 'example'    THEN 4
-            WHEN 'warning'    THEN 5
-            ELSE 99
-          END,
           priority DESC
     """, (concept_id,))
 

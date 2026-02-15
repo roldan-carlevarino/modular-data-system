@@ -1177,3 +1177,44 @@ def get_knowledge_concepts(project_id: Optional[int] = None):
             conn.close()
 
 
+@app.put("/knowledge/block/{block_id}")
+def update_block_content(block_id: int, payload: dict):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        # Solo validar que venga content
+        content = payload.get("content")
+        
+        if content is None:
+            raise HTTPException(400, "Content is required")
+
+        # Update simple
+        cur.execute("""
+            UPDATE knowledge_blocks
+            SET content = %s
+            WHERE id = %s
+        """, (content, block_id))
+
+        if cur.rowcount == 0:
+            raise HTTPException(404, f"Block {block_id} not found")
+
+        conn.commit()
+
+        return {"ok": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to update: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()

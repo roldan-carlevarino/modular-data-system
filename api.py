@@ -1047,7 +1047,6 @@ def knowledge_query(
               AND (
                     %(mode)s IS NULL
                     OR b.mode = %(mode)s
-                    OR b.mode IS NULL
                   )
               AND (
                     %(project_id)s IS NULL

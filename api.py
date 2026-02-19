@@ -1233,7 +1233,7 @@ def logs():
             SELECT cron_name, status, message, error, timestamp
             FROM crons_log
             ORDER BY timestamp DESC
-            LIMIT 20
+            LIMIT 5
         """)
         rows = cur.fetchall()
 

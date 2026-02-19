@@ -1218,3 +1218,40 @@ def update_block_content(block_id: int, payload: dict):
             cur.close()
         if conn:
             conn.close()
+            
+
+@app.get("/logs")
+def logs():
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, message, timestamp
+            FROM system_logs
+            ORDER BY timestamp DESC
+            LIMIT 100
+        """)
+        rows = cur.fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "log_time": r[2].isoformat(),
+                "level": r[1],
+                "message": r[1]
+            }
+            for r in rows
+        ]
+
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get logs: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()

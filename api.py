@@ -1231,7 +1231,7 @@ def logs():
 
         cur.execute("""
             SELECT id, message, timestamp
-            FROM system_logs
+            FROM crons_log
             ORDER BY timestamp DESC
             LIMIT 100
         """)

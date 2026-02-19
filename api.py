@@ -1230,21 +1230,21 @@ def logs():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT id, message, timestamp
+            SELECT cron_name, status, message, error, timestamp
             FROM crons_log
             ORDER BY timestamp DESC
-            LIMIT 100
+            LIMIT 20
         """)
         rows = cur.fetchall()
 
         return [
             {
-                "id": r[0],
-                "log_time": r[2].isoformat(),
-                "level": r[1],
-                "message": r[1]
+                "id": i,
+                "message": f"{r[0]}: {r[2] if r[1] == 'success' else r[3]}",
+                "timestamp": r[4].isoformat(),
+                "level": r[1]
             }
-            for r in rows
+            for i, r in enumerate(rows, 1)
         ]
 
     except Exception as e:

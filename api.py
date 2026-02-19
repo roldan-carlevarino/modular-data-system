@@ -1240,7 +1240,7 @@ def logs():
         return [
             {
                 "id": i,
-                "message": f"{r[0]}: {r[2] if r[1] == 'success' else r[3]}",
+                "message": f"{r[2] if r[1] == 'success' else r[3]}",
                 "timestamp": r[4].isoformat(),
                 "level": r[1]
             }

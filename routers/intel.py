@@ -313,15 +313,22 @@ def create_block(payload: dict):
         if not concept_id or not block_type:
             raise HTTPException(400, "concept_id and block_type are required")
 
-
-        if project_id:
-           cur.execute("""
+        # Inserta el bloque siempre
+        cur.execute("""
             INSERT INTO knowledge_blocks (concept_id, block_type, content, mode, reviewed)
             VALUES (%s, %s, %s, %s, TRUE)
             RETURNING id
-            """, (concept_id, block_type, content, mode)) 
+        """, (concept_id, block_type, content, mode))
 
         block_id = cur.fetchone()[0]
+
+        # Si hay project_id, inserta en knowledge_block_projects
+        if project_id:
+            cur.execute("""
+                INSERT INTO knowledge_block_projects (block_id, project_id)
+                VALUES (%s, %s)
+            """, (block_id, project_id))
+
         conn.commit()
 
         return {"id": block_id}

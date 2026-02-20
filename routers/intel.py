@@ -214,6 +214,44 @@ def get_knowledge_concepts(project_id: Optional[int] = None):
         if conn:
             conn.close()
 
+@router.post("/concepts/new")
+def create_concept(payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        name = payload.get("name")
+        parent_concept_id = payload.get("parent_concept_id")
+
+        if not name:
+            raise HTTPException(400, "Name is required")
+
+        cur.execute("""
+            INSERT INTO knowledge_concepts (name, parent_concept_id)
+            VALUES (%s, %s)
+            RETURNING id
+        """, (name, parent_concept_id))
+
+        concept_id = cur.fetchone()[0]
+        conn.commit()
+
+        return {"id": concept_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to create concept: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
 
 @router.put("/block/{block_id}")
 def update_block_content(block_id: int, payload: dict):

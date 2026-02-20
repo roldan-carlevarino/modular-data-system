@@ -5,11 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 # Import all routers
-from routers import rss, tasks, pomodoro, knowledge, logs, shopping, pando, gym, projects
+from routers import rss, tasks, pomodoro, intel, logs, shopping, plaza, gym, projects
 
 load_dotenv()
 
-app = FastAPI(title="Dashboard API", version="2.0")
+app = FastAPI()
 
 # CORS
 app.add_middleware(
@@ -21,15 +21,21 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(rss.router)
-app.include_router(tasks.router)
-app.include_router(pomodoro.router)
-app.include_router(knowledge.router)
-app.include_router(logs.router)
-app.include_router(shopping.router)
-app.include_router(pando.router)
-app.include_router(gym.router)
-app.include_router(projects.router)
+
+
+
+
+
+
+app.include_router(rss_router)
+app.include_router(tasks_router)
+app.include_router(pomodoro_router)
+app.include_router(intel_router)
+app.include_router(logs_router)
+app.include_router(shopping_router)
+app.include_router(plaza_router)
+app.include_router(gym_router)
+app.include_router(projects_router)
 
 @app.get("/")
 def root():

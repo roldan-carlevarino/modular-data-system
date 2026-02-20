@@ -62,7 +62,7 @@ def get_top_global(limit: int = 10):
         conn.close()
 
 
-@router.get("/top/{category}")  # ← FALTA la barra /
+@router.get("/top/{category}")  
 def get_top_category(category: str, limit: int = 10):
     valid_categories = ["ml", "markets", "quant", "politics"]
     

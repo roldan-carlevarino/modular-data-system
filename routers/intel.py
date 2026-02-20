@@ -256,3 +256,86 @@ def update_block_content(block_id: int, payload: dict):
             cur.close()
         if conn:
             conn.close()
+
+@router.post("/block/new")
+def create_block(payload: dict):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        concept_id = payload.get("concept_id")
+        block_type = payload.get("block_type")
+        content = payload.get("content", "")
+        mode = payload.get("mode")
+        project_id = payload.get("project_id")
+
+        if not concept_id or not block_type:
+            raise HTTPException(400, "concept_id and block_type are required")
+
+        cur.execute("""
+            INSERT INTO knowledge_blocks (concept_id, block_type, content, mode)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (concept_id, block_type, content, mode))
+
+        block_id = cur.fetchone()[0]
+
+        if project_id:
+            cur.execute("""
+                INSERT INTO knowledge_block_projects (block_id, project_id)
+                VALUES (%s, %s)
+            """, (block_id, project_id))
+
+        conn.commit()
+
+        return {"id": block_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to create block: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+@router.delete("/block/{block_id}")
+def delete_block(block_id: int):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        cur.execute("""
+            DELETE FROM knowledge_blocks
+            WHERE id = %s
+        """, (block_id,))
+
+        if cur.rowcount == 0:
+            raise HTTPException(404, f"Block {block_id} not found")
+
+        conn.commit()
+
+        return {"ok": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to delete block: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()

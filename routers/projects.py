@@ -5,7 +5,7 @@ import os
 router = APIRouter(prefix="/projects", tags=["Projects"])  
 
 
-@router.get("/list")
+@router.get("/")
 def get_projects():
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()

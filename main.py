@@ -5,7 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 # Import all routers
-from routers import rss, tasks, pomodoro, intel, logs, shopping, plaza, gym, projects
+from routers.rss import router as rss_router
+from routers.tasks import router as tasks_router
+from routers.pomodoro import router as pomodoro_router
+from routers.intel import router as intel_router
+from routers.logs import router as logs_router
+from routers.shopping import router as shopping_router
+from routers.plaza import router as plaza_router
+from routers.gym import router as gym_router
+from routers.projects import router as projects_router
 
 load_dotenv()
 
@@ -21,8 +29,6 @@ app.add_middleware(
 )
 
 # Include routers
-
-
 
 
 

@@ -322,10 +322,12 @@ def create_block(payload: dict):
         block_id = cur.fetchone()[0]
 
         if project_id:
-            cur.execute("""
-                INSERT INTO knowledge_block_projects (block_id, project_id)
-                VALUES (%s, %s)
-            """, (block_id, project_id))
+           cur.execute("""
+            INSERT INTO knowledge_blocks (concept_id, block_type, content, mode, reviewed)
+            VALUES (%s, %s, %s, %s, TRUE)
+            RETURNING id
+            """, (concept_id, block_type, content, mode)) 
+
 
         conn.commit()
 

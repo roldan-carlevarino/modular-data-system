@@ -1335,7 +1335,7 @@ def get_top_category(category: str, limit: int = 10):
             detail=f"Invalid category. Must be one of: {', '.join(valid_categories)}"
         )
     
-    conn = get_db_connection()
+    conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
     
     try:

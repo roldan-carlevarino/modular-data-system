@@ -224,6 +224,7 @@ def create_concept(payload: dict):
 
         name = payload.get("name")
         parent_concept_id = payload.get("parent_concept_id")
+        project_id = payload.get("project_id")
 
         if not name:
             raise HTTPException(400, "Name is required")

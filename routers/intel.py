@@ -230,10 +230,10 @@ def create_concept(payload: dict):
             raise HTTPException(400, "Name is required")
 
         cur.execute("""
-            INSERT INTO knowledge_concepts (name, parent_concept_id)
-            VALUES (%s, %s)
+            INSERT INTO knowledge_concepts (name, parent_concept_id, project_id)
+            VALUES (%s, %s, %s)
             RETURNING id
-        """, (name, parent_concept_id))
+        """, (name, parent_concept_id, project_id))
 
         concept_id = cur.fetchone()[0]
         conn.commit()

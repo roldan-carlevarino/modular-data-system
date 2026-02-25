@@ -228,7 +228,8 @@ def create_concept(payload: dict):
 
         if not name:
             raise HTTPException(400, "Name is required")
-
+        
+        print("name:", name, "parent_concept_id:", parent_concept_id, "project_id:", project_id)
         cur.execute("""
             INSERT INTO knowledge_concepts (name, parent_concept_id)
             VALUES (%s, %s)

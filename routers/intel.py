@@ -478,6 +478,49 @@ def update_block_projects(block_id: int, payload: dict):
         if conn: conn.close()
 
 
+@router.get("/concepts/{concept_id}/projects")
+def get_concept_projects(concept_id: int):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT project_id FROM knowledge_concept_projects
+            WHERE concept_id = %s
+        """, (concept_id,))
+        return {"project_ids": [r[0] for r in cur.fetchall()]}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get concept projects: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.put("/concepts/{concept_id}/projects")
+def update_concept_projects(concept_id: int, payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        project_ids = payload.get("project_ids", [])
+        cur.execute("DELETE FROM knowledge_concept_projects WHERE concept_id = %s", (concept_id,))
+        for pid in project_ids:
+            cur.execute("""
+                INSERT INTO knowledge_concept_projects (concept_id, project_id)
+                VALUES (%s, %s) ON CONFLICT DO NOTHING
+            """, (concept_id, pid))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Failed to update concept projects: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
 @router.put("/concepts/{concept_id}")
 def update_concept(concept_id: int, payload: dict):
     conn = None

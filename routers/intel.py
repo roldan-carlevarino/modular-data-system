@@ -360,6 +360,185 @@ def create_block(payload: dict):
         if conn:
             conn.close()
 
+@router.get("/blocks")
+def get_blocks_for_relations(project_id: Optional[int] = None):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        if project_id is None:
+            cur.execute("""
+                SELECT
+                    b.id,
+                    b.concept_id,
+                    b.block_type,
+                    LEFT(b.content, 60) AS content_preview,
+                    b.depends_on_block_id,
+                    COALESCE(
+                        ARRAY_AGG(bp.project_id) FILTER (WHERE bp.project_id IS NOT NULL),
+                        ARRAY[]::int[]
+                    ) AS project_ids
+                FROM knowledge_blocks b
+                LEFT JOIN knowledge_block_projects bp ON bp.block_id = b.id
+                GROUP BY b.id
+                ORDER BY b.concept_id, b.id
+            """)
+        else:
+            cur.execute("""
+                SELECT
+                    b.id,
+                    b.concept_id,
+                    b.block_type,
+                    LEFT(b.content, 60) AS content_preview,
+                    b.depends_on_block_id,
+                    COALESCE(
+                        ARRAY_AGG(bp.project_id) FILTER (WHERE bp.project_id IS NOT NULL),
+                        ARRAY[]::int[]
+                    ) AS project_ids
+                FROM knowledge_blocks b
+                LEFT JOIN knowledge_block_projects bp ON bp.block_id = b.id
+                WHERE EXISTS (
+                    SELECT 1 FROM knowledge_block_projects bp2
+                    WHERE bp2.block_id = b.id AND bp2.project_id = %(project_id)s
+                )
+                GROUP BY b.id
+                ORDER BY b.concept_id, b.id
+            """, {"project_id": project_id})
+
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "concept_id": r[1],
+                "block_type": r[2],
+                "content_preview": r[3],
+                "depends_on_block_id": r[4],
+                "project_ids": list(r[5]) if r[5] else []
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get blocks: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.put("/block/{block_id}/relations")
+def update_block_relations(block_id: int, payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE knowledge_blocks
+            SET depends_on_block_id = %s
+            WHERE id = %s
+        """, (payload.get("depends_on_block_id"), block_id))
+        if cur.rowcount == 0:
+            raise HTTPException(404, f"Block {block_id} not found")
+        conn.commit()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Failed to update block relations: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.put("/block/{block_id}/projects")
+def update_block_projects(block_id: int, payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        project_ids = payload.get("project_ids", [])
+        # Replace all project associations
+        cur.execute("DELETE FROM knowledge_block_projects WHERE block_id = %s", (block_id,))
+        for pid in project_ids:
+            cur.execute("""
+                INSERT INTO knowledge_block_projects (block_id, project_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (block_id, pid))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Failed to update block projects: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.put("/concepts/{concept_id}")
+def update_concept(concept_id: int, payload: dict):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        # Prevent setting a descendant as parent (would create a cycle)
+        if "parent_concept_id" in payload and payload["parent_concept_id"] is not None:
+            new_parent = payload["parent_concept_id"]
+            cur.execute("""
+                WITH RECURSIVE desc_tree AS (
+                    SELECT id FROM knowledge_concepts WHERE id = %s
+                    UNION ALL
+                    SELECT c.id FROM knowledge_concepts c
+                    INNER JOIN desc_tree dt ON c.parent_concept_id = dt.id
+                )
+                SELECT id FROM desc_tree WHERE id = %s
+            """, (concept_id, new_parent))
+            if cur.fetchone():
+                raise HTTPException(400, "Cannot set a descendant as parent (circular reference)")
+
+        fields = []
+        values = []
+
+        if "name" in payload:
+            fields.append("name = %s")
+            values.append(payload["name"])
+
+        if "parent_concept_id" in payload:
+            fields.append("parent_concept_id = %s")
+            values.append(payload["parent_concept_id"])
+
+        if not fields:
+            raise HTTPException(400, "Nothing to update")
+
+        values.append(concept_id)
+        cur.execute(f"UPDATE knowledge_concepts SET {', '.join(fields)} WHERE id = %s", values)
+
+        if cur.rowcount == 0:
+            raise HTTPException(404, f"Concept {concept_id} not found")
+
+        conn.commit()
+        return {"ok": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to update concept: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 @router.delete("/concepts/{concept_id}")
 def delete_concept(concept_id: int):
     conn = None

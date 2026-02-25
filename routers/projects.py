@@ -40,3 +40,39 @@ def get_projects():
         }
         for r in rows
     ]
+
+
+@router.post("/")
+def create_project(payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        name = payload.get("name", "").strip()
+        if not name:
+            raise HTTPException(400, "Name is required")
+
+        parent_id = payload.get("parent_id") or None
+        proj_type = payload.get("type", "project")
+        description = payload.get("description", "").strip() or None
+
+        cur.execute("""
+            INSERT INTO projects (name, parent_id, type, description, status)
+            VALUES (%s, %s, %s, %s, 'active')
+            RETURNING id
+        """, (name, parent_id, proj_type, description))
+
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"id": new_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Failed to create project: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()

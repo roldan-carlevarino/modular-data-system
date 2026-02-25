@@ -360,6 +360,60 @@ def create_block(payload: dict):
         if conn:
             conn.close()
 
+@router.delete("/concepts/{concept_id}")
+def delete_concept(concept_id: int):
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        # Get the concept and all descendants recursively
+        cur.execute("""
+            WITH RECURSIVE concept_tree AS (
+                SELECT id FROM knowledge_concepts WHERE id = %s
+                UNION ALL
+                SELECT c.id FROM knowledge_concepts c
+                INNER JOIN concept_tree ct ON c.parent_concept_id = ct.id
+            )
+            SELECT id FROM concept_tree
+        """, (concept_id,))
+
+        ids = [row[0] for row in cur.fetchall()]
+
+        if not ids:
+            raise HTTPException(404, f"Concept {concept_id} not found")
+
+        # Delete associated blocks (and their project links via cascade or explicit)
+        cur.execute("""
+            DELETE FROM knowledge_block_projects
+            WHERE block_id IN (
+                SELECT id FROM knowledge_blocks WHERE concept_id = ANY(%s)
+            )
+        """, (ids,))
+        cur.execute("DELETE FROM knowledge_blocks WHERE concept_id = ANY(%s)", (ids,))
+        cur.execute("DELETE FROM knowledge_concept_projects WHERE concept_id = ANY(%s)", (ids,))
+        cur.execute("DELETE FROM knowledge_concepts WHERE id = ANY(%s)", (ids,))
+
+        conn.commit()
+
+        return {"ok": True, "deleted": ids}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to delete concept: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 @router.delete("/block/{block_id}")
 def delete_block(block_id: int):
     conn = None

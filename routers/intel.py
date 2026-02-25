@@ -180,17 +180,23 @@ def get_knowledge_concepts(project_id: Optional[int] = None):
             """)
         else:
             cur.execute("""
-                SELECT DISTINCT
-                    c.id,
-                    c.name,
-                    c.parent_concept_id
+                SELECT DISTINCT c.id, c.name, c.parent_concept_id
                 FROM knowledge_concepts c
-                JOIN knowledge_blocks b
-                     ON b.concept_id = c.id
-                JOIN knowledge_block_projects bp
-                     ON bp.block_id = b.id
-                 WHERE b.reviewed = TRUE
-                  AND bp.project_id = %(project_id)s
+                WHERE
+                    EXISTS (
+                        SELECT 1
+                        FROM knowledge_blocks b
+                        JOIN knowledge_block_projects bp ON bp.block_id = b.id
+                        WHERE b.concept_id = c.id
+                          AND b.reviewed = TRUE
+                          AND bp.project_id = %(project_id)s
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM knowledge_concept_projects cp
+                        WHERE cp.concept_id = c.id
+                          AND cp.project_id = %(project_id)s
+                    )
                 ORDER BY c.parent_concept_id NULLS FIRST, c.name
             """, {"project_id": project_id})
 

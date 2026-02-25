@@ -239,7 +239,7 @@ def create_concept(payload: dict):
         concept_id = cur.fetchone()[0]
 
         cur.execute("""
-            INSERT INTO knowledge_block_projects (block_id, project_id)
+            INSERT INTO knowledge_concept_projects (concept_id, project_id)
             VALUES (%s, %s)
         """, (concept_id, project_id))
 

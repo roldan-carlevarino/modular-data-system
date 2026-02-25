@@ -504,15 +504,63 @@ def update_concept_projects(concept_id: int, payload: dict):
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
-        project_ids = payload.get("project_ids", [])
+        new_project_ids = set(payload.get("project_ids", []))
+
+        # Current projects for this concept
+        cur.execute("SELECT project_id FROM knowledge_concept_projects WHERE concept_id = %s", (concept_id,))
+        old_project_ids = set(r[0] for r in cur.fetchall())
+
+        added_projects = new_project_ids - old_project_ids
+
+        # Get all descendant concept ids (including self)
+        cur.execute("""
+            WITH RECURSIVE concept_tree AS (
+                SELECT id FROM knowledge_concepts WHERE id = %s
+                UNION ALL
+                SELECT c.id FROM knowledge_concepts c
+                INNER JOIN concept_tree ct ON c.parent_concept_id = ct.id
+            )
+            SELECT id FROM concept_tree
+        """, (concept_id,))
+        all_concept_ids = [r[0] for r in cur.fetchall()]
+
+        # Update concept-project links for root concept only
         cur.execute("DELETE FROM knowledge_concept_projects WHERE concept_id = %s", (concept_id,))
-        for pid in project_ids:
+        for pid in new_project_ids:
             cur.execute("""
                 INSERT INTO knowledge_concept_projects (concept_id, project_id)
                 VALUES (%s, %s) ON CONFLICT DO NOTHING
             """, (concept_id, pid))
+
+        # Cascade newly added projects to all descendant concepts and their blocks
+        if added_projects:
+            added_list = list(added_projects)
+
+            # Add to descendant concepts (excluding root already handled)
+            for cid in all_concept_ids:
+                if cid == concept_id:
+                    continue
+                for pid in added_list:
+                    cur.execute("""
+                        INSERT INTO knowledge_concept_projects (concept_id, project_id)
+                        VALUES (%s, %s) ON CONFLICT DO NOTHING
+                    """, (cid, pid))
+
+            # Add to all blocks of all concepts in the tree
+            cur.execute("""
+                SELECT id FROM knowledge_blocks WHERE concept_id = ANY(%s)
+            """, (all_concept_ids,))
+            block_ids = [r[0] for r in cur.fetchall()]
+
+            for bid in block_ids:
+                for pid in added_list:
+                    cur.execute("""
+                        INSERT INTO knowledge_block_projects (block_id, project_id)
+                        VALUES (%s, %s) ON CONFLICT DO NOTHING
+                    """, (bid, pid))
+
         conn.commit()
-        return {"ok": True}
+        return {"ok": True, "cascaded_to_concepts": len(all_concept_ids) - 1, "added_projects": list(added_projects)}
     except Exception as e:
         if conn: conn.rollback()
         raise HTTPException(500, f"Failed to update concept projects: {str(e)}")

@@ -34,7 +34,14 @@ def start_pomodoro(payload: dict):
             (pomodoro_id, type, started, remaining_seconds)
             VALUES (%s, %s, %s, %s)
         """, (pomodoro_id, "study", now(), 3 * 60 * 60))
-    
+
+        # Pre-create rest event as finished so remaining_seconds is stored
+        cur.execute("""
+            INSERT INTO pomodoro_event
+            (pomodoro_id, type, started, finished, remaining_seconds)
+            VALUES (%s, 'rest', %s, %s, %s)
+        """, (pomodoro_id, now(), now(), 30 * 60))
+
         for exp in expectations:
             cur.execute("""
                 INSERT INTO pomodoro_expectation 
@@ -276,7 +283,7 @@ def current_pomodoro():
         LIMIT 1
     """)
     row = cur.fetchone()
-    
+
     if not row:
         cur.close()
         conn.close()
@@ -284,6 +291,34 @@ def current_pomodoro():
 
     pomodoro_id = row[0]
 
+    # Active event
+    cur.execute("""
+        SELECT type, started, remaining_seconds
+        FROM pomodoro_event
+        WHERE pomodoro_id = %s AND finished IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+    """, (pomodoro_id,))
+    active = cur.fetchone()
+
+    # Last known remaining for each type
+    cur.execute("""
+        SELECT type, remaining_seconds
+        FROM pomodoro_event
+        WHERE pomodoro_id = %s
+        ORDER BY id DESC
+    """, (pomodoro_id,))
+    all_events = cur.fetchall()
+
+    # Build remaining map: last seen remaining per type
+    remaining_map = {"study": 3 * 3600, "rest": 30 * 60}
+    seen = set()
+    for ev_type, ev_remaining in all_events:
+        if ev_type not in seen and ev_remaining is not None:
+            remaining_map[ev_type] = ev_remaining
+            seen.add(ev_type)
+
+    # Focus
     cur.execute("""
         SELECT ref_type, ref_id, since
         FROM pomodoro_focus_now
@@ -291,16 +326,19 @@ def current_pomodoro():
     """, (pomodoro_id,))
     focus = cur.fetchone()
 
-    cur.execute("""
-        SELECT type, started
-        FROM pomodoro_event
-        WHERE pomodoro_id = %s
-          AND finished IS NULL
-    """, (pomodoro_id,))
-    event = cur.fetchone()
-
     cur.close()
     conn.close()
+
+    if not active:
+        return None
+
+    active_type, active_started, active_remaining_db = active
+    elapsed = int((now() - active_started).total_seconds())
+    active_remaining_now = max(0, (active_remaining_db or 0) - elapsed)
+
+    # The inactive type shows its last stored remaining
+    inactive_type = "rest" if active_type == "study" else "study"
+    inactive_remaining = remaining_map.get(inactive_type, 0)
 
     return {
         "pomodoro_id": pomodoro_id,
@@ -309,10 +347,10 @@ def current_pomodoro():
             "ref_id": focus[1],
             "since": focus[2]
         } if focus else None,
-        "state": {
-            "type": event[0],
-            "started": event[1]
-        } if event else None
+        "active_type": active_type,
+        "study_remaining": active_remaining_now if active_type == "study" else inactive_remaining if inactive_type == "study" else remaining_map["study"],
+        "rest_remaining":  active_remaining_now if active_type == "rest"  else inactive_remaining if inactive_type == "rest"  else remaining_map["rest"],
+        "active_started": active_started.isoformat()
     }
 
 @router.get("/today")

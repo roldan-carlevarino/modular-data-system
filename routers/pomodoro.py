@@ -45,13 +45,14 @@ def start_pomodoro(payload: dict):
         for exp in expectations:
             cur.execute("""
                 INSERT INTO pomodoro_expectation 
-                (pomodoro_id, ref_type, ref_id, weight)
-                VALUES (%s, %s, %s, %s)
+                (pomodoro_id, ref_type, ref_id, weight, details)
+                VALUES (%s, %s, %s, %s, %s)
             """, (
                 pomodoro_id, 
                 exp.get("ref_type"), 
                 exp.get("ref_id"), 
-                exp.get("weight", 1)
+                exp.get("weight", 1),
+                exp.get("details")
             ))
 
         cur.execute("""
@@ -328,7 +329,7 @@ def current_pomodoro():
 
     # Expectations
     cur.execute("""
-        SELECT ref_type, ref_id, weight
+        SELECT ref_type, ref_id, weight, details
         FROM pomodoro_expectation
         WHERE pomodoro_id = %s
         ORDER BY weight DESC
@@ -361,7 +362,7 @@ def current_pomodoro():
         "rest_remaining":  active_remaining_now if active_type == "rest"  else inactive_remaining if inactive_type == "rest"  else remaining_map["rest"],
         "active_started": active_started.isoformat(),
         "expectations": [
-            {"ref_type": r[0], "ref_id": r[1], "weight": r[2]}
+            {"ref_type": r[0], "ref_id": r[1], "weight": r[2], "details": r[3]}
             for r in expectations_rows
         ]
     }

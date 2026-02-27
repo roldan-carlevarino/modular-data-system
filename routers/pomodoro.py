@@ -326,6 +326,15 @@ def current_pomodoro():
     """, (pomodoro_id,))
     focus = cur.fetchone()
 
+    # Expectations
+    cur.execute("""
+        SELECT ref_type, ref_id, weight
+        FROM pomodoro_expectation
+        WHERE pomodoro_id = %s
+        ORDER BY weight DESC
+    """, (pomodoro_id,))
+    expectations_rows = cur.fetchall()
+
     cur.close()
     conn.close()
 
@@ -350,7 +359,11 @@ def current_pomodoro():
         "active_type": active_type,
         "study_remaining": active_remaining_now if active_type == "study" else inactive_remaining if inactive_type == "study" else remaining_map["study"],
         "rest_remaining":  active_remaining_now if active_type == "rest"  else inactive_remaining if inactive_type == "rest"  else remaining_map["rest"],
-        "active_started": active_started.isoformat()
+        "active_started": active_started.isoformat(),
+        "expectations": [
+            {"ref_type": r[0], "ref_id": r[1], "weight": r[2]}
+            for r in expectations_rows
+        ]
     }
 
 @router.get("/today")

@@ -21,6 +21,19 @@ def start_pomodoro(payload: dict):
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
 
+        # Close any stale active sessions before starting a new one
+        cur.execute("""
+            UPDATE pomodoro_log
+            SET status = 'ended', end_time = %s
+            WHERE status = 'active'
+        """, (now(),))
+        cur.execute("""
+            UPDATE pomodoro_event SET finished = %s
+            WHERE finished IS NULL
+              AND pomodoro_id IN (
+                  SELECT id FROM pomodoro_log WHERE status = 'ended'
+              )
+        """, (now(),))
 
         cur.execute("""
             INSERT INTO pomodoro_log (start_time, status)
@@ -280,6 +293,7 @@ def current_pomodoro():
         SELECT id
         FROM pomodoro_log
         WHERE status = 'active'
+          AND start_time >= NOW() - INTERVAL '12 hours'
         ORDER BY start_time DESC
         LIMIT 1
     """)

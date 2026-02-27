@@ -56,7 +56,7 @@ def create_project(payload: dict):
 
         parent_id = payload.get("parent_id") or None
         proj_type = payload.get("type", "project")
-        description = payload.get("description", "").strip() or None
+        description = (payload.get("description") or "").strip() or None
 
         cur.execute("""
             INSERT INTO projects (name, parent_id, type, description, status)

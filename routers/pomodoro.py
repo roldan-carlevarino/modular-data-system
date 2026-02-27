@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException
 import psycopg2
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 router = APIRouter(prefix="/pomodoro", tags=["Pomodoro"]) 
 
 def now():
-    """Returns current UTC datetime for PostgreSQL compatibility"""
-    return datetime.utcnow()
+    """Returns current UTC datetime (timezone-aware) for PostgreSQL compatibility"""
+    return datetime.now(timezone.utc)
 
 @router.post("/start")
 def start_pomodoro(payload: dict):

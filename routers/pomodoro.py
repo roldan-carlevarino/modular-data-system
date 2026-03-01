@@ -56,17 +56,34 @@ def start_pomodoro(payload: dict):
         """, (pomodoro_id, now(), now(), 30 * 60))
 
         for exp in expectations:
-            cur.execute("""
-                INSERT INTO pomodoro_expectation 
-                (pomodoro_id, ref_type, ref_id, weight, details)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                pomodoro_id, 
-                exp.get("ref_type"), 
-                exp.get("ref_id"), 
-                exp.get("weight", 1),
-                exp.get("details")
-            ))
+            try:
+                cur.execute("""
+                    INSERT INTO pomodoro_expectation 
+                    (pomodoro_id, ref_type, ref_id, weight, details)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (pomodoro_id, ref_type, ref_id) DO UPDATE
+                      SET weight = EXCLUDED.weight, details = EXCLUDED.details
+                """, (
+                    pomodoro_id,
+                    exp.get("ref_type"),
+                    exp.get("ref_id"),
+                    exp.get("weight", 1),
+                    exp.get("details")
+                ))
+            except Exception:
+                conn.rollback()
+                # Fallback: insert without details (column may not exist yet)
+                cur.execute("""
+                    INSERT INTO pomodoro_expectation 
+                    (pomodoro_id, ref_type, ref_id, weight)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (
+                    pomodoro_id,
+                    exp.get("ref_type"),
+                    exp.get("ref_id"),
+                    exp.get("weight", 1)
+                ))
 
         cur.execute("""
             INSERT INTO pomodoro_focus_now 
@@ -342,13 +359,23 @@ def current_pomodoro():
     focus = cur.fetchone()
 
     # Expectations
-    cur.execute("""
-        SELECT ref_type, ref_id, weight, details
-        FROM pomodoro_expectation
-        WHERE pomodoro_id = %s
-        ORDER BY weight DESC
-    """, (pomodoro_id,))
-    expectations_rows = cur.fetchall()
+    try:
+        cur.execute("""
+            SELECT ref_type, ref_id, weight, details
+            FROM pomodoro_expectation
+            WHERE pomodoro_id = %s
+            ORDER BY weight DESC
+        """, (pomodoro_id,))
+        expectations_rows = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        cur.execute("""
+            SELECT ref_type, ref_id, weight, NULL
+            FROM pomodoro_expectation
+            WHERE pomodoro_id = %s
+            ORDER BY weight DESC
+        """, (pomodoro_id,))
+        expectations_rows = cur.fetchall()
 
     cur.close()
     conn.close()

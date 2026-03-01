@@ -13,9 +13,9 @@ _b2_bucket = None
 def _get_b2():
     """Lazy-init B2 connection (cached after first call)."""
     global _b2_api, _b2_bucket
-    if _b2_api is None:
-        key_id     = os.getenv("B2_KEY_ID")
-        app_key    = os.getenv("B2_APPLICATION_KEY")
+    if _b2_api is None or _b2_bucket is None:
+        key_id      = os.getenv("B2_KEY_ID")
+        app_key     = os.getenv("B2_APPLICATION_KEY")
         bucket_name = os.getenv("B2_BUCKET_NAME")
 
         if not key_id or not app_key or not bucket_name:
@@ -24,10 +24,19 @@ def _get_b2():
                 detail="B2 credentials not configured (B2_KEY_ID / B2_APPLICATION_KEY / B2_BUCKET_NAME)"
             )
 
-        info = InMemoryAccountInfo()
-        _b2_api = B2Api(info)
-        _b2_api.authorize_account("production", key_id, app_key)
-        _b2_bucket = _b2_api.get_bucket_by_name(bucket_name)
+        try:
+            info = InMemoryAccountInfo()
+            api = B2Api(info)
+            api.authorize_account("production", key_id, app_key)
+            bucket = api.get_bucket_by_name(bucket_name)
+            # Only cache once fully initialised
+            _b2_api = api
+            _b2_bucket = bucket
+        except Exception as e:
+            # Don't cache a broken state
+            _b2_api = None
+            _b2_bucket = None
+            raise HTTPException(status_code=500, detail=f"B2 init error: {e}")
 
     return _b2_api, _b2_bucket
 

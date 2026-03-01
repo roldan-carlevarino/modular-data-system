@@ -14,6 +14,7 @@ from routers.shopping import router as shopping_router
 from routers.plaza import router as plaza_router
 from routers.gym import router as gym_router
 from routers.projects import router as projects_router
+from routers.media import router as media_router
 
 load_dotenv()
 
@@ -23,12 +24,10 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Include routers
 
 
 
@@ -42,6 +41,7 @@ app.include_router(shopping_router)
 app.include_router(plaza_router)
 app.include_router(gym_router)
 app.include_router(projects_router)
+app.include_router(media_router)
 
 @app.get("/")
 def root():

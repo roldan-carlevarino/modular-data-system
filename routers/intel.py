@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, Body, Query
+from fastapi import APIRouter, HTTPException, Body, Query, UploadFile, File, Form
 import psycopg2
 import os
+import json
+import tempfile
 from typing import List, Optional
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"]) 
@@ -244,10 +246,11 @@ def create_concept(payload: dict):
 
         concept_id = cur.fetchone()[0]
 
-        cur.execute("""
-            INSERT INTO knowledge_concept_projects (concept_id, project_id)
-            VALUES (%s, %s)
-        """, (concept_id, project_id))
+        if project_id is not None:
+            cur.execute("""
+                INSERT INTO knowledge_concept_projects (concept_id, project_id)
+                VALUES (%s, %s)
+            """, (concept_id, project_id))
 
         conn.commit()
 
@@ -278,16 +281,24 @@ def update_block_content(block_id: int, payload: dict):
 
         # Solo validar que venga content
         content = payload.get("content")
+        block_type = payload.get("block_type")
         
         if content is None:
             raise HTTPException(400, "Content is required")
 
         # Update simple
-        cur.execute("""
-            UPDATE knowledge_blocks
-            SET content = %s
-            WHERE id = %s
-        """, (content, block_id))
+        if block_type:
+            cur.execute("""
+                UPDATE knowledge_blocks
+                SET content = %s, block_type = %s
+                WHERE id = %s
+            """, (content, block_type, block_id))
+        else:
+            cur.execute("""
+                UPDATE knowledge_blocks
+                SET content = %s
+                WHERE id = %s
+            """, (content, block_id))
 
         if cur.rowcount == 0:
             raise HTTPException(404, f"Block {block_id} not found")
@@ -717,3 +728,120 @@ def delete_block(block_id: int):
             cur.close()
         if conn:
             conn.close()
+
+
+# ── INGEST ────────────────────────────────────────────────────────────────────
+
+@router.post("/ingest")
+async def ingest_document(
+    file: UploadFile = File(...),
+    project_id: Optional[int] = Form(None),
+    instructions: Optional[str] = Form(None),
+):
+    """
+    Extract text from a PDF or DOCX, fetch existing concepts for context,
+    and ask an LLM to suggest new concepts + blocks.
+    Returns a list of suggestions:
+      [{concept, block_type, content, parent_concept_name}]
+    """
+    import pdfplumber
+    import docx as docxlib
+    from openai import OpenAI
+
+    # 1. Extract text
+    suffix = os.path.splitext(file.filename)[1].lower()
+    content_bytes = await file.read()
+
+    text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(content_bytes)
+        tmp_path = tmp.name
+
+    try:
+        if suffix == ".pdf":
+            with pdfplumber.open(tmp_path) as pdf:
+                pages = [p.extract_text() or "" for p in pdf.pages]
+            text = "\n\n".join(pages)
+        elif suffix == ".docx":
+            doc = docxlib.Document(tmp_path)
+            text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        else:
+            raise HTTPException(400, "Only PDF and DOCX are supported")
+    finally:
+        os.unlink(tmp_path)
+
+    if not text.strip():
+        raise HTTPException(422, "Could not extract text from document")
+
+    # Truncate to ~12k chars to stay within token limits
+    text = text[:12000]
+
+    # 2. Fetch existing concepts for context
+    conn = None
+    existing_concepts = []
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        if project_id:
+            cur.execute("""
+                SELECT kc.id, kc.name, kc.parent_concept_id
+                FROM knowledge_concepts kc
+                JOIN knowledge_concept_projects kcp ON kcp.concept_id = kc.id
+                WHERE kcp.project_id = %s
+            """, (project_id,))
+        else:
+            cur.execute("SELECT id, name, parent_concept_id FROM knowledge_concepts LIMIT 200")
+        rows = cur.fetchall()
+        existing_concepts = [{"id": r[0], "name": r[1], "parent_id": r[2]} for r in rows]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch concepts: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+
+    concept_list = "\n".join(
+        f"- {c['name']}" + (f" (child of id {c['parent_id']})" if c['parent_id'] else "")
+        for c in existing_concepts
+    ) or "None yet."
+
+    # 3. Build prompt
+    system_prompt = (
+        "You are a knowledge extraction assistant. "
+        "Given a document excerpt and an existing concept tree, "
+        "suggest NEW concepts and their first knowledge block. "
+        "Return ONLY a JSON array. Each item: "
+        "{\"concept\": string, \"block_type\": string, \"content\": string, \"parent_concept_name\": string|null}. "
+        "block_type must be one of: definition, intuition, formula, example, proof, theorem, remark, exercise, summary. "
+        "parent_concept_name must exactly match an existing concept name or be null. "
+        "Do not suggest concepts that already exist. Aim for 5-15 suggestions."
+    )
+    user_prompt = (
+        f"EXISTING CONCEPTS:\n{concept_list}\n\n"
+        f"{'INSTRUCTIONS: ' + instructions + chr(10) + chr(10) if instructions else ''}"
+        f"DOCUMENT EXCERPT:\n{text}"
+    )
+
+    # 4. Call LLM
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        temperature=0.3,
+        response_format={"type": "json_object"},
+    )
+
+    raw = response.choices[0].message.content
+    try:
+        parsed = json.loads(raw)
+        # model may wrap in {"suggestions": [...]} or return array directly
+        if isinstance(parsed, list):
+            suggestions = parsed
+        else:
+            suggestions = next(v for v in parsed.values() if isinstance(v, list))
+    except Exception:
+        raise HTTPException(500, "LLM returned invalid JSON")
+
+    return suggestions

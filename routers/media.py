@@ -28,7 +28,13 @@ def _get_b2():
             info = InMemoryAccountInfo()
             api = B2Api(info)
             api.authorize_account("production", key_id, app_key)
-            bucket = api.get_bucket_by_name(bucket_name)
+            # get_bucket_by_name() fails with restricted keys (lists all buckets internally).
+            # Use bucket ID directly if available, otherwise fall back to name.
+            bucket_id = os.getenv("B2_BUCKET_ID")
+            if bucket_id:
+                bucket = api.get_bucket_by_id(bucket_id)
+            else:
+                bucket = api.get_bucket_by_name(bucket_name)
             # Only cache once fully initialised
             _b2_api = api
             _b2_bucket = bucket

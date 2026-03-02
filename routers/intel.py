@@ -792,28 +792,33 @@ async def ingest_document(
         else:
             cur.execute("SELECT id, name, parent_concept_id FROM knowledge_concepts LIMIT 200")
         rows = cur.fetchall()
-        existing_concepts = [{"id": r[0], "name": r[1], "parent_id": r[2]} for r in rows]
+        existing_concepts = [{"id": r[0], "name": r[1], "parent_concept_id": r[2]} for r in rows]
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch concepts: {str(e)}")
     finally:
         if conn:
             conn.close()
 
+    id_to_name = {c['id']: c['name'] for c in existing_concepts}
     concept_list = "\n".join(
-        f"- {c['name']}" + (f" (child of id {c['parent_id']})" if c['parent_id'] else "")
+        f"- {c['name']}" + (f" (child of: {id_to_name[c['parent_concept_id']]})" if c['parent_concept_id'] and c['parent_concept_id'] in id_to_name else "")
         for c in existing_concepts
     ) or "None yet."
 
     # 3. Build prompt
     system_prompt = (
-        "You are a knowledge extraction assistant. "
-        "Given a document excerpt and an existing concept tree, "
-        "suggest NEW concepts and their first knowledge block. "
-        "Return ONLY a JSON array. Each item: "
-        "{\"concept\": string, \"block_type\": string, \"content\": string, \"parent_concept_name\": string|null}. "
-        "block_type must be one of: definition, intuition, formula, example, proof, theorem, remark, exercise, summary. "
-        "parent_concept_name must exactly match an existing concept name or be null. "
-        "Do not suggest concepts that already exist. Aim for 5-15 suggestions."
+        "You are a knowledge-graph expansion assistant. "
+        "Your job is to analyze a document and suggest NEW concepts to add to an existing knowledge tree.\n\n"
+        "STRICT RULES:\n"
+        "1. For EVERY suggested concept, you MUST assign a parent_concept_name from the EXISTING CONCEPTS list below "
+        "unless the concept is genuinely top-level (has no logical parent anywhere in the tree).\n"
+        "2. Choose the MOST SPECIFIC existing concept as the parent — prefer deep nesting over shallow.\n"
+        "3. parent_concept_name must be the EXACT string as it appears in the existing concepts list, or null.\n"
+        "4. Never suggest a concept that already exists in the list.\n"
+        "5. Aim for 5-15 suggestions. The vast majority should have a non-null parent.\n\n"
+        "Return a JSON object: {\"suggestions\": [{\"concept\": string, \"block_type\": string, "
+        "\"content\": string, \"parent_concept_name\": string|null}]}. "
+        "block_type must be one of: definition, intuition, formula, example, proof, theorem, remark, exercise, summary."
     )
     user_prompt = (
         f"EXISTING CONCEPTS:\n{concept_list}\n\n"
@@ -844,4 +849,4 @@ async def ingest_document(
     except Exception:
         raise HTTPException(500, "LLM returned invalid JSON")
 
-    return suggestions
+    return {"suggestions": suggestions, "existing_concepts": existing_concepts}

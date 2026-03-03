@@ -734,7 +734,7 @@ def delete_block(block_id: int):
 
 @router.post("/ingest")
 async def ingest_document(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     project_id: Optional[int] = Form(None),
     instructions: Optional[str] = Form(None),
 ):
@@ -748,33 +748,42 @@ async def ingest_document(
     import docx as docxlib
     from openai import OpenAI
 
-    # 1. Extract text
-    suffix = os.path.splitext(file.filename)[1].lower()
-    content_bytes = await file.read()
+    instructions_text = (instructions or "").strip()
+    query_only_mode = file is None
 
+    if query_only_mode and not instructions_text:
+        raise HTTPException(400, "Provide a file or write instructions")
+
+    # 1. Extract text (or use instructions as direct query when no file is provided)
     text = ""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(content_bytes)
-        tmp_path = tmp.name
+    if file is not None:
+        suffix = os.path.splitext(file.filename)[1].lower()
+        content_bytes = await file.read()
 
-    try:
-        if suffix == ".pdf":
-            with pdfplumber.open(tmp_path) as pdf:
-                pages = [p.extract_text() or "" for p in pdf.pages]
-            text = "\n\n".join(pages)
-        elif suffix == ".docx":
-            doc = docxlib.Document(tmp_path)
-            text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
-        else:
-            raise HTTPException(400, "Only PDF and DOCX are supported")
-    finally:
-        os.unlink(tmp_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content_bytes)
+            tmp_path = tmp.name
 
-    if not text.strip():
-        raise HTTPException(422, "Could not extract text from document")
+        try:
+            if suffix == ".pdf":
+                with pdfplumber.open(tmp_path) as pdf:
+                    pages = [p.extract_text() or "" for p in pdf.pages]
+                text = "\n\n".join(pages)
+            elif suffix == ".docx":
+                doc = docxlib.Document(tmp_path)
+                text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            else:
+                raise HTTPException(400, "Only PDF and DOCX are supported")
+        finally:
+            os.unlink(tmp_path)
 
-    # Truncate to ~12k chars to stay within token limits
-    text = text[:12000]
+        if not text.strip():
+            raise HTTPException(422, "Could not extract text from document")
+
+        # Truncate to ~12k chars to stay within token limits
+        text = text[:12000]
+    else:
+        text = instructions_text[:12000]
 
     # 2. Fetch existing concepts for context
     conn = None
@@ -820,11 +829,19 @@ async def ingest_document(
         "\"content\": string, \"parent_concept_name\": string|null}]}. "
         "block_type must be one of: definition, intuition, formula, example, proof, theorem, remark, exercise, summary."
     )
-    user_prompt = (
-        f"EXISTING CONCEPTS:\n{concept_list}\n\n"
-        f"{'INSTRUCTIONS: ' + instructions + chr(10) + chr(10) if instructions else ''}"
-        f"DOCUMENT EXCERPT:\n{text}"
-    )
+    if query_only_mode:
+        user_prompt = (
+            f"EXISTING CONCEPTS:\n{concept_list}\n\n"
+            "No document was provided. The next text is a direct user query about where a concept/topic should go in the hierarchy.\n"
+            "Prioritize placement quality over quantity and keep suggestions concise.\n\n"
+            f"USER QUERY:\n{text}"
+        )
+    else:
+        user_prompt = (
+            f"EXISTING CONCEPTS:\n{concept_list}\n\n"
+            f"{'INSTRUCTIONS: ' + instructions + chr(10) + chr(10) if instructions else ''}"
+            f"DOCUMENT EXCERPT:\n{text}"
+        )
 
     # 4. Call LLM
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

@@ -258,6 +258,85 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
             conn.close()
 
 
+@router.get("/month-summary")
+def get_month_summary(year: int = Query(...), month: int = Query(...)):
+    if month < 1 or month > 12:
+        raise HTTPException(400, "month must be between 1 and 12")
+
+    conn = None
+    cur = None
+
+    try:
+        month_start = datetime(year, month, 1)
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1)
+        else:
+            month_end = datetime(year, month + 1, 1)
+
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            WITH day_series AS (
+                SELECT generate_series(%s::date, (%s::date - INTERVAL '1 day')::date, INTERVAL '1 day')::date AS day
+            ),
+            item_times AS (
+                SELECT
+                    ci.id,
+                    COALESCE(
+                        ci.start_time,
+                        cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                    ) AS item_start,
+                    COALESCE(
+                        ci.end_time,
+                        COALESCE(
+                            ci.start_time,
+                            cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                        ) + make_interval(mins => COALESCE(ci.duration_minutes, 60))
+                    ) AS item_end
+                FROM calendar_item ci
+                LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+            )
+            SELECT
+                ds.day,
+                COUNT(DISTINCT it.id) AS items_count
+            FROM day_series ds
+            LEFT JOIN item_times it
+              ON it.item_start < (ds.day + INTERVAL '1 day')
+             AND it.item_end > ds.day
+            GROUP BY ds.day
+            ORDER BY ds.day
+            """,
+            (month_start.date(), month_end.date()),
+        )
+
+        rows = cur.fetchall()
+        days = [
+            {
+                "day": r[0].isoformat(),
+                "items_count": int(r[1]),
+            }
+            for r in rows
+        ]
+
+        return {
+            "year": year,
+            "month": month,
+            "days": days,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load month summary: {str(e)}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 @router.post("/slot/{slot_id}/item")
 def upsert_slot_item(slot_id: int, payload: dict):
     conn = None

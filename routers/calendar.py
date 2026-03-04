@@ -337,6 +337,91 @@ def get_month_summary(year: int = Query(...), month: int = Query(...)):
             conn.close()
 
 
+@router.get("/upcoming")
+def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default=12)):
+    if days < 1:
+        raise HTTPException(400, "days must be >= 1")
+    if limit < 1 or limit > 200:
+        raise HTTPException(400, "limit must be between 1 and 200")
+
+    conn = None
+    cur = None
+
+    try:
+        window_start = datetime.now()
+        window_end = window_start + timedelta(days=days)
+
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT
+                ci.id,
+                ci.title,
+                ci.item_kind,
+                COALESCE(
+                    ci.start_time,
+                    cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                ) AS event_start,
+                COALESCE(
+                    ci.end_time,
+                    COALESCE(
+                        ci.start_time,
+                        cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                    ) + make_interval(mins => COALESCE(ci.duration_minutes, 60))
+                ) AS event_end,
+                COALESCE(ci.duration_minutes, 60) AS duration_minutes
+            FROM calendar_item ci
+            LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+            WHERE COALESCE(
+                    ci.end_time,
+                    COALESCE(
+                        ci.start_time,
+                        cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                    ) + make_interval(mins => COALESCE(ci.duration_minutes, 60))
+                  ) >= %s
+              AND COALESCE(
+                    ci.start_time,
+                    cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                  ) < %s
+            ORDER BY event_start ASC
+            LIMIT %s
+            """,
+            (window_start, window_end, limit),
+        )
+
+        rows = cur.fetchall()
+        events = [
+            {
+                "id": r[0],
+                "title": r[1] or "(untitled event)",
+                "item_kind": r[2],
+                "start_time": r[3].isoformat() if r[3] else None,
+                "end_time": r[4].isoformat() if r[4] else None,
+                "duration_minutes": r[5],
+            }
+            for r in rows
+        ]
+
+        return {
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "count": len(events),
+            "events": events,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load upcoming events: {str(e)}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 @router.post("/slot/{slot_id}/item")
 def upsert_slot_item(slot_id: int, payload: dict):
     conn = None

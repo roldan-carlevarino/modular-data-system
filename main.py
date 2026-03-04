@@ -15,6 +15,7 @@ from routers.plaza import router as plaza_router
 from routers.gym import router as gym_router
 from routers.projects import router as projects_router
 from routers.media import router as media_router
+from routers.calendar import router as calendar_router
 
 load_dotenv()
 
@@ -42,6 +43,7 @@ app.include_router(plaza_router)
 app.include_router(gym_router)
 app.include_router(projects_router)
 app.include_router(media_router)
+app.include_router(calendar_router)
 
 @app.get("/")
 def root():

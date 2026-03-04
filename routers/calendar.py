@@ -13,58 +13,6 @@ def _connect():
     return psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
 
 
-def _slot_duration_minutes(start_dt: datetime, end_dt: datetime) -> int:
-    return int((end_dt - start_dt).total_seconds() // 60)
-
-
-def _validate_item_window(start_minute: int, duration_minutes: int, slot_duration: int):
-    if start_minute < 0:
-        raise HTTPException(400, "start_minute must be >= 0")
-    if duration_minutes <= 0:
-        raise HTTPException(400, "duration_minutes must be > 0")
-    end_minute = start_minute + duration_minutes
-    if end_minute > slot_duration:
-        raise HTTPException(400, f"Item exceeds slot duration ({slot_duration} min)")
-
-
-def _ensure_no_overlap(cur, slot_id: int, start_minute: int, duration_minutes: int, exclude_item_id: Optional[int] = None):
-    end_minute = start_minute + duration_minutes
-
-    params = [slot_id]
-    exclude_sql = ""
-    if exclude_item_id is not None:
-        exclude_sql = "AND id <> %s"
-        params.append(exclude_item_id)
-
-    cur.execute(
-        f"""
-        SELECT id, title, start_minute, duration_minutes
-        FROM calendar_item
-        WHERE calendar_slot_id = %s
-          {exclude_sql}
-        ORDER BY start_minute ASC, id ASC
-        """,
-        tuple(params),
-    )
-
-    for row in cur.fetchall():
-        existing_id, existing_title, existing_start, existing_duration = row
-        if existing_start is None or existing_duration is None:
-            continue
-        existing_end = existing_start + existing_duration
-        if start_minute < existing_end and end_minute > existing_start:
-            raise HTTPException(
-                409,
-                {
-                    "message": "Time overlap detected",
-                    "conflict_item_id": existing_id,
-                    "conflict_title": existing_title,
-                    "conflict_start_minute": existing_start,
-                    "conflict_duration_minutes": existing_duration,
-                },
-            )
-
-
 def _parse_day(day: Optional[str]) -> date:
     if not day:
         return date.today()
@@ -72,6 +20,17 @@ def _parse_day(day: Optional[str]) -> date:
         return date.fromisoformat(day)
     except ValueError:
         raise HTTPException(400, "Invalid day format, expected YYYY-MM-DD")
+
+
+def _parse_iso_dt(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        raise HTTPException(400, "Invalid datetime format, expected ISO 8601")
+
+
+def _slot_duration_minutes(start_dt: datetime, end_dt: datetime) -> int:
+    return int((end_dt - start_dt).total_seconds() // 60)
 
 
 def _ensure_day_slots(cur, target_day: date, start_hour: int = 5, end_hour: int = 21):
@@ -99,6 +58,65 @@ def _ensure_day_slots(cur, target_day: date, start_hour: int = 5, end_hour: int 
                 """,
                 (start_dt, end_dt),
             )
+
+
+def _ensure_no_time_overlap(cur, start_dt: datetime, end_dt: datetime, exclude_item_id: Optional[int] = None):
+    params = [start_dt, end_dt]
+    extra = ""
+    if exclude_item_id is not None:
+        extra = "AND ci.id <> %s"
+        params.append(exclude_item_id)
+
+    cur.execute(
+        f"""
+        SELECT ci.id, ci.title
+        FROM calendar_item ci
+        LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+        WHERE (
+            COALESCE(
+                ci.start_time,
+                cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+            ) < %s
+        )
+          AND (
+            COALESCE(
+                ci.end_time,
+                COALESCE(
+                    ci.start_time,
+                    cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                ) + make_interval(mins => COALESCE(ci.duration_minutes, 60))
+            ) > %s
+        )
+          {extra}
+        LIMIT 1
+        """,
+        tuple(params),
+    )
+
+    conflict = cur.fetchone()
+    if conflict:
+        raise HTTPException(
+            409,
+            {
+                "message": "Time overlap detected",
+                "conflict_item_id": conflict[0],
+                "conflict_title": conflict[1],
+            },
+        )
+
+
+def _first_item_in_slot(cur, slot_id: int):
+    cur.execute(
+        """
+        SELECT id, start_time, end_time, start_minute, duration_minutes, title
+        FROM calendar_item
+        WHERE calendar_slot_id = %s
+        ORDER BY start_minute ASC NULLS FIRST, position ASC, id ASC
+        LIMIT 1
+        """,
+        (slot_id,),
+    )
+    return cur.fetchone()
 
 
 @router.get("/day")
@@ -139,13 +157,37 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
                 i.title,
                 i.position,
                 i.duration_minutes,
-                i.start_minute
+                i.start_minute,
+                i.start_time,
+                i.end_time
             FROM uniq_slots s
             LEFT JOIN LATERAL (
-                SELECT id, item_kind, item_ref_id, title, position, duration_minutes, start_minute
+                SELECT
+                    ci.id,
+                    ci.item_kind,
+                    ci.item_ref_id,
+                    ci.title,
+                    ci.position,
+                    ci.duration_minutes,
+                    ci.start_minute,
+                    ci.start_time,
+                    ci.end_time
                 FROM calendar_item ci
-                WHERE ci.calendar_slot_id = s.id
-                ORDER BY ci.start_minute ASC NULLS FIRST, ci.position ASC, ci.id ASC
+                WHERE (
+                    ci.start_time IS NOT NULL
+                    AND ci.end_time IS NOT NULL
+                    AND ci.start_time < s.end_time
+                    AND ci.end_time > s.start_time
+                )
+                   OR (
+                    ci.start_time IS NULL
+                    AND ci.end_time IS NULL
+                    AND ci.calendar_slot_id = s.id
+                )
+                ORDER BY
+                    COALESCE(ci.start_time, s.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))) ASC,
+                    ci.position ASC,
+                    ci.id ASC
             ) i ON TRUE
             ORDER BY s.start_time ASC
             """,
@@ -157,27 +199,46 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
 
         for r in rows:
             slot_id = r[0]
+            slot_start = r[1]
+            slot_end = r[2]
+
             if slot_id not in slots_map:
                 slots_map[slot_id] = {
                     "slot_id": slot_id,
-                    "start_time": r[1].isoformat(),
-                    "end_time": r[2].isoformat(),
-                    "hour": r[1].hour,
+                    "start_time": slot_start.isoformat(),
+                    "end_time": slot_end.isoformat(),
+                    "hour": slot_start.hour,
                     "items": [],
                     "item": None,
                 }
 
-            if r[3] is not None:
-                item_obj = {
-                    "id": r[3],
-                    "item_kind": r[4],
-                    "item_ref_id": r[5],
-                    "title": r[6] or "",
-                    "position": r[7],
-                    "duration_minutes": r[8],
-                    "start_minute": r[9] if r[9] is not None else 0,
-                }
-                slots_map[slot_id]["items"].append(item_obj)
+            if r[3] is None:
+                continue
+
+            item_start_dt = r[10]
+            item_end_dt = r[11]
+            if item_start_dt is not None:
+                rel_start = int((item_start_dt - slot_start).total_seconds() // 60)
+                start_minute = max(0, rel_start)
+            else:
+                start_minute = r[9] if r[9] is not None else 0
+
+            duration_minutes = r[8]
+            if duration_minutes is None and item_start_dt is not None and item_end_dt is not None:
+                duration_minutes = int((item_end_dt - item_start_dt).total_seconds() // 60)
+
+            item_obj = {
+                "id": r[3],
+                "item_kind": r[4],
+                "item_ref_id": r[5],
+                "title": r[6] or "",
+                "position": r[7],
+                "duration_minutes": duration_minutes,
+                "start_minute": start_minute,
+                "start_time": item_start_dt.isoformat() if item_start_dt else None,
+                "end_time": item_end_dt.isoformat() if item_end_dt else None,
+            }
+            slots_map[slot_id]["items"].append(item_obj)
 
         slots = sorted(slots_map.values(), key=lambda s: s["start_time"])
         for slot in slots:
@@ -210,6 +271,9 @@ def upsert_slot_item(slot_id: int, payload: dict):
         item_id = payload.get("item_id")
         item_id = int(item_id) if item_id is not None else None
 
+        provided_start_time = payload.get("start_time")
+        provided_end_time = payload.get("end_time")
+
         conn = _connect()
         cur = conn.cursor()
 
@@ -217,8 +281,13 @@ def upsert_slot_item(slot_id: int, payload: dict):
         slot_row = cur.fetchone()
         if slot_row is None:
             raise HTTPException(404, "Calendar slot not found")
+
         _, slot_start, slot_end = slot_row
         slot_duration = _slot_duration_minutes(slot_start, slot_end)
+        if start_minute < 0 or start_minute >= slot_duration:
+            raise HTTPException(400, f"start_minute must be between 0 and {slot_duration - 1}")
+        if duration_minutes <= 0:
+            raise HTTPException(400, "duration_minutes must be > 0")
 
         if not title:
             if item_id is not None:
@@ -227,26 +296,31 @@ def upsert_slot_item(slot_id: int, payload: dict):
                     (item_id, slot_id),
                 )
             else:
-                cur.execute(
-                    "DELETE FROM calendar_item WHERE calendar_slot_id = %s",
-                    (slot_id,),
-                )
+                cur.execute("DELETE FROM calendar_item WHERE calendar_slot_id = %s", (slot_id,))
             conn.commit()
             return {"ok": True, "slot_id": slot_id, "cleared": True}
 
-        _validate_item_window(start_minute, duration_minutes, slot_duration)
+        if provided_start_time and provided_end_time:
+            start_dt = _parse_iso_dt(provided_start_time)
+            end_dt = _parse_iso_dt(provided_end_time)
+            if end_dt <= start_dt:
+                raise HTTPException(400, "end_time must be greater than start_time")
+            duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            rel_minutes = int((start_dt - slot_start).total_seconds() // 60)
+            start_minute = max(0, rel_minutes)
+        else:
+            start_dt = slot_start + timedelta(minutes=start_minute)
+            end_dt = start_dt + timedelta(minutes=duration_minutes)
+
+        _ensure_no_time_overlap(cur, start_dt, end_dt, exclude_item_id=item_id)
 
         if item_id is not None:
             cur.execute(
                 "SELECT id FROM calendar_item WHERE id = %s AND calendar_slot_id = %s",
                 (item_id, slot_id),
             )
-            row = cur.fetchone()
-
-            if not row:
+            if not cur.fetchone():
                 raise HTTPException(404, "Calendar item not found in slot")
-
-            _ensure_no_overlap(cur, slot_id, start_minute, duration_minutes, exclude_item_id=item_id)
 
             cur.execute(
                 """
@@ -254,14 +328,14 @@ def upsert_slot_item(slot_id: int, payload: dict):
                 SET title = %s,
                     item_kind = %s,
                     duration_minutes = %s,
-                    start_minute = %s
+                    start_minute = %s,
+                    start_time = %s,
+                    end_time = %s
                 WHERE id = %s
                 """,
-                (title, item_kind, duration_minutes, start_minute, item_id),
+                (title, item_kind, duration_minutes, start_minute, start_dt, end_dt, item_id),
             )
         else:
-            _ensure_no_overlap(cur, slot_id, start_minute, duration_minutes)
-
             cur.execute(
                 """
                 SELECT COALESCE(MAX(position), -1) + 1
@@ -280,12 +354,14 @@ def upsert_slot_item(slot_id: int, payload: dict):
                     title,
                     position,
                     duration_minutes,
-                    start_minute
+                    start_minute,
+                    start_time,
+                    end_time
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (slot_id, item_kind, title, next_position, duration_minutes, start_minute),
+                (slot_id, item_kind, title, next_position, duration_minutes, start_minute, start_dt, end_dt),
             )
             item_id = cur.fetchone()[0]
 
@@ -323,95 +399,75 @@ def swap_slot_items(payload: dict):
         cur = conn.cursor()
 
         cur.execute(
-            "SELECT id FROM calendar_slot WHERE id IN (%s, %s)",
+            "SELECT id, start_time, end_time FROM calendar_slot WHERE id IN (%s, %s) ORDER BY id",
             (from_slot_id, to_slot_id),
         )
         slot_rows = cur.fetchall()
         if len(slot_rows) != 2:
             raise HTTPException(404, "One or both calendar slots not found")
 
-        cur.execute(
-            """
-            SELECT id, start_minute, duration_minutes
-            FROM calendar_item
-            WHERE calendar_slot_id = %s
-            ORDER BY start_minute ASC NULLS FIRST, position ASC, id ASC
-            LIMIT 1
-            """,
-            (from_slot_id,),
-        )
-        from_item = cur.fetchone()
+        slot_by_id = {r[0]: {"start": r[1], "end": r[2]} for r in slot_rows}
+        from_slot = slot_by_id[from_slot_id]
+        to_slot = slot_by_id[to_slot_id]
 
-        cur.execute(
-            """
-            SELECT id, start_minute, duration_minutes
-            FROM calendar_item
-            WHERE calendar_slot_id = %s
-            ORDER BY start_minute ASC NULLS FIRST, position ASC, id ASC
-            LIMIT 1
-            """,
-            (to_slot_id,),
-        )
-        to_item = cur.fetchone()
+        from_item = _first_item_in_slot(cur, from_slot_id)
+        to_item = _first_item_in_slot(cur, to_slot_id)
 
-        from_item_id = from_item[0] if from_item else None
-        to_item_id = to_item[0] if to_item else None
+        if not from_item and not to_item:
+            return {"ok": True, "swapped": False}
 
-        def has_overlap_in_slot(slot_id: int, start_m: int, dur_m: int, exclude_id: Optional[int] = None) -> bool:
-            if start_m is None or dur_m is None:
-                return False
-            params = [slot_id]
-            extra = ""
-            if exclude_id is not None:
-                extra = " AND id <> %s"
-                params.append(exclude_id)
+        def _target_times(item_row, source_slot_start: datetime, target_slot_start: datetime):
+            item_id, item_start_dt, item_end_dt, item_start_minute, item_duration, _title = item_row
+            duration = item_duration
+            if duration is None and item_start_dt and item_end_dt:
+                duration = int((item_end_dt - item_start_dt).total_seconds() // 60)
+            if duration is None:
+                duration = 60
 
-            cur.execute(
-                f"""
-                SELECT start_minute, duration_minutes
-                FROM calendar_item
-                WHERE calendar_slot_id = %s
-                  {extra}
-                """,
-                tuple(params),
-            )
-            new_end = start_m + dur_m
-            for ex_start, ex_dur in cur.fetchall():
-                if ex_start is None or ex_dur is None:
-                    continue
-                ex_end = ex_start + ex_dur
-                if start_m < ex_end and new_end > ex_start:
-                    return True
-            return False
+            if item_start_dt is not None:
+                offset = int((item_start_dt - source_slot_start).total_seconds() // 60)
+            else:
+                offset = item_start_minute if item_start_minute is not None else 0
 
-        if from_item and has_overlap_in_slot(to_slot_id, from_item[1], from_item[2], exclude_id=to_item_id):
-            raise HTTPException(409, "Cannot swap: moved source item would overlap in target slot")
+            new_start = target_slot_start + timedelta(minutes=offset)
+            new_end = new_start + timedelta(minutes=duration)
+            new_start_min = max(0, offset)
+            return item_id, new_start, new_end, new_start_min, duration
 
-        if to_item and has_overlap_in_slot(from_slot_id, to_item[1], to_item[2], exclude_id=from_item_id):
-            raise HTTPException(409, "Cannot swap: moved target item would overlap in source slot")
+        from_new = _target_times(from_item, from_slot["start"], to_slot["start"]) if from_item else None
+        to_new = _target_times(to_item, to_slot["start"], from_slot["start"]) if to_item else None
 
-        if from_item_id and to_item_id:
+        if from_new:
+            _ensure_no_time_overlap(cur, from_new[1], from_new[2], exclude_item_id=from_new[0])
+        if to_new:
+            _ensure_no_time_overlap(cur, to_new[1], to_new[2], exclude_item_id=to_new[0])
+
+        if from_new:
             cur.execute(
                 """
                 UPDATE calendar_item
-                SET calendar_slot_id = CASE
-                    WHEN id = %s THEN %s
-                    WHEN id = %s THEN %s
-                    ELSE calendar_slot_id
-                END
-                WHERE id IN (%s, %s)
+                SET calendar_slot_id = %s,
+                    start_time = %s,
+                    end_time = %s,
+                    start_minute = %s,
+                    duration_minutes = %s
+                WHERE id = %s
                 """,
-                (from_item_id, to_slot_id, to_item_id, from_slot_id, from_item_id, to_item_id),
+                (to_slot_id, from_new[1], from_new[2], from_new[3], from_new[4], from_new[0]),
             )
-        elif from_item_id and not to_item_id:
+
+        if to_new:
             cur.execute(
-                "UPDATE calendar_item SET calendar_slot_id = %s WHERE id = %s",
-                (to_slot_id, from_item_id),
-            )
-        elif to_item_id and not from_item_id:
-            cur.execute(
-                "UPDATE calendar_item SET calendar_slot_id = %s WHERE id = %s",
-                (from_slot_id, to_item_id),
+                """
+                UPDATE calendar_item
+                SET calendar_slot_id = %s,
+                    start_time = %s,
+                    end_time = %s,
+                    start_minute = %s,
+                    duration_minutes = %s
+                WHERE id = %s
+                """,
+                (from_slot_id, to_new[1], to_new[2], to_new[3], to_new[4], to_new[0]),
             )
 
         conn.commit()

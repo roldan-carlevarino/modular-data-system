@@ -13,6 +13,19 @@ class WeightEventPayload(BaseModel):
     weight: int
 
 
+def _ensure_weight_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weight_log (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL,
+            weight INTEGER NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+
+
 @router.get("/today")
 def get_today_weight():
     today = date.today()
@@ -23,13 +36,15 @@ def get_today_weight():
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+        _ensure_weight_table(cur)
+        conn.commit()
 
         cur.execute(
             """
             SELECT weight
             FROM weight_log
             WHERE date = %s
-            ORDER BY id DESC
+            ORDER BY date DESC
             LIMIT 1
             """,
             (today,),
@@ -64,6 +79,7 @@ def add_new_weight(payload: WeightEventPayload):
 
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+        _ensure_weight_table(cur)
 
         cur.execute(
             """

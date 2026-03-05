@@ -12,6 +12,30 @@ class WaterEventPayload(BaseModel):
     water_event: str = "drink"
 
 
+def _ensure_water_tables(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS water_day (
+            date DATE PRIMARY KEY,
+            water_start INTEGER DEFAULT 0,
+            water INTEGER DEFAULT 0
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS water_log (
+            id SERIAL PRIMARY KEY,
+            event TEXT,
+            date DATE NOT NULL,
+            water_increment INTEGER NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+
+
 @router.get("/today")
 def get_today_water():
     today = date.today()
@@ -22,6 +46,8 @@ def get_today_water():
     try:
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+        _ensure_water_tables(cur)
+        conn.commit()
 
         cur.execute(
             """
@@ -67,6 +93,7 @@ def event_water(payload: WaterEventPayload):
 
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
+        _ensure_water_tables(cur)
 
 
         cur.execute(

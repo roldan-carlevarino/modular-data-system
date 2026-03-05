@@ -6,6 +6,14 @@ from datetime import date, datetime
 router = APIRouter(prefix="/tasks", tags=["Tasks"]) 
 
 
+def _current_occurrence_by_hour(hour: int) -> str:
+    if hour < 12:
+        return "morning"
+    if hour < 18:
+        return "afternoon"
+    return "evening"
+
+
 @router.get("/today")
 def get_tasks_today():
     try:
@@ -48,6 +56,61 @@ def get_tasks_today():
     except Exception as e:
         
         raise
+
+
+@router.get("/today/current-occurrence")
+def get_tasks_today_current_occurrence():
+    conn = None
+    cur = None
+
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        today = date.today()
+        occurrence = _current_occurrence_by_hour(datetime.now().hour)
+
+        cur.execute(
+            """
+            SELECT
+                task_occurrences.id,
+                task.name,
+                task_occurrences.completed,
+                task_occurrences.position,
+                task_occurrences.occurrence
+            FROM task_occurrences
+            JOIN task ON task.id = task_occurrences.task_id
+            WHERE task_occurrences.date = %s
+              AND task_occurrences.occurrence = %s
+            ORDER BY task_occurrences.position;
+            """,
+            (today, occurrence),
+        )
+
+        rows = cur.fetchall()
+
+        return {
+            "occurrence": occurrence,
+            "tasks": [
+                {
+                    "occurrences_id": r[0],
+                    "name": r[1],
+                    "completed": r[2],
+                    "position": r[3],
+                    "day_context": r[4],
+                }
+                for r in rows
+            ],
+        }
+
+    except Exception as e:
+        raise HTTPException(500, f"Current-occurrence fetch failed: {str(e)}")
+
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 @router.post("/today/refresh_occurrences")
 def refresh_tasks_today():

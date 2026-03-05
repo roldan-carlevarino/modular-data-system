@@ -16,6 +16,9 @@ from routers.gym import router as gym_router
 from routers.projects import router as projects_router
 from routers.media import router as media_router
 from routers.calendar import router as calendar_router
+from routers.water import router as water_router
+from routers.weight import router as weight_router
+
 
 load_dotenv()
 
@@ -44,7 +47,8 @@ app.include_router(gym_router)
 app.include_router(projects_router)
 app.include_router(media_router)
 app.include_router(calendar_router)
-
+app.include_router(water_router)
+app.include_router(weight_router)
 @app.get("/")
 def root():
     return {"status": "ok", "version": "2.0"}

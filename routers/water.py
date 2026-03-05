@@ -17,7 +17,6 @@ def _ensure_water_tables(cur):
         """
         CREATE TABLE IF NOT EXISTS water_day (
             date DATE PRIMARY KEY,
-            water_start INTEGER DEFAULT 0,
             water INTEGER DEFAULT 0
         )
         """
@@ -51,7 +50,7 @@ def get_today_water():
 
         cur.execute(
             """
-            SELECT COALESCE(water, water_start, 0)
+            SELECT COALESCE(water, 0)
             FROM water_day
             WHERE date = %s
             LIMIT 1
@@ -99,7 +98,7 @@ def event_water(payload: WaterEventPayload):
         cur.execute(
             """
             UPDATE water_day
-            SET water = COALESCE(water, water_start, 0) + %s
+            SET water = COALESCE(water, 0) + %s
             WHERE date = %s
             RETURNING water
             """,
@@ -110,8 +109,8 @@ def event_water(payload: WaterEventPayload):
         if updated_row is None:
             cur.execute(
                 """
-                INSERT INTO water_day (date, water_start, water)
-                VALUES (%s, 0, %s)
+                INSERT INTO water_day (date, water)
+                VALUES (%s, %s)
                 RETURNING water
                 """,
                 (today, water_increase),

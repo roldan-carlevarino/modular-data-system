@@ -30,7 +30,7 @@ def _get_conn():
 
 
 WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-OCCURRENCE_ORDER = ["desayuno", "almuerzo", "comida", "merienda", "cena"]
+OCCURRENCE_ORDER = ["morning", "afternoon", "evening"]
 
 
 def _order_occurrence(occurrence: str) -> int:

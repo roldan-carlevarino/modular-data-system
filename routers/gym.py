@@ -63,7 +63,7 @@ def get_routines():
 
 # GET /gym/routines/{routine_id} - Get routine with its exercises
 @router.get("/routines/{routine_id}")
-def get_routine(routine_id: int):
+def get_routine(routine_id: int, weekday: Optional[int] = None):
     conn = _get_conn()
     cur = conn.cursor()
     
@@ -75,13 +75,21 @@ def get_routine(routine_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Routine not found")
     
-    # Get exercises for this routine
-    cur.execute("""
-        SELECT id, exercise, series, reps, "order"
-        FROM gym_routine_exercise
-        WHERE routine_id = %s
-        ORDER BY "order"
-    """, (routine_id,))
+    # Get exercises for this routine (optionally filtered by weekday)
+    if weekday is not None:
+        cur.execute("""
+            SELECT id, exercise, series, reps, position, weekday
+            FROM gym_routine_exercise
+            WHERE routine_id = %s AND weekday = %s
+            ORDER BY position
+        """, (routine_id, weekday))
+    else:
+        cur.execute("""
+            SELECT id, exercise, series, reps, position, weekday
+            FROM gym_routine_exercise
+            WHERE routine_id = %s
+            ORDER BY position
+        """, (routine_id,))
     exercises = cur.fetchall()
     
     cur.close()
@@ -93,7 +101,7 @@ def get_routine(routine_id: int):
         "status": routine[2],
         "reason": routine[3],
         "exercises": [
-            {"id": e[0], "exercise": e[1], "series": e[2], "reps": e[3], "order": e[4]}
+            {"id": e[0], "exercise": e[1], "series": e[2], "reps": e[3], "position": e[4], "weekday": e[5]}
             for e in exercises
         ]
     }
@@ -218,6 +226,8 @@ def add_exercise_to_session(session_id: int, payload: ExerciseLogCreate):
     cur.execute("""
         INSERT INTO gym_log_exercise (log_session_id, routine_exercise_id, position, notes)
         VALUES (%s, %s, %s, %s)
+        ON CONFLICT (log_session_id, routine_exercise_id) 
+        DO UPDATE SET position = EXCLUDED.position, notes = EXCLUDED.notes
         RETURNING id
     """, (session_id, payload.routine_exercise_id, payload.position, payload.notes))
     
@@ -260,7 +270,8 @@ def get_today_session(routine_id: Optional[int] = None):
                 re.exercise,
                 re.series,
                 re.reps,
-                le.position
+                le.position,
+                le.notes
             FROM gym_log_exercise le
             JOIN gym_routine_exercise re ON re.id = le.routine_exercise_id
             WHERE le.log_session_id = %s
@@ -286,7 +297,8 @@ def get_today_session(routine_id: Optional[int] = None):
                     "exercise": e[2],
                     "target_series": e[3],
                     "target_reps": e[4],
-                    "position": e[5]
+                    "position": e[5],
+                    "notes": e[6]
                 }
                 for e in exercises
             ]
@@ -346,6 +358,8 @@ def add_exercise_to_today(payload: ExerciseLogCreate):
     cur.execute("""
         INSERT INTO gym_log_exercise (log_session_id, routine_exercise_id, position, notes)
         VALUES (%s, %s, %s, %s)
+        ON CONFLICT (log_session_id, routine_exercise_id) 
+        DO UPDATE SET position = EXCLUDED.position, notes = EXCLUDED.notes
         RETURNING id
     """, (session_id, payload.routine_exercise_id, payload.position, payload.notes))
     

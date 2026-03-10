@@ -18,6 +18,7 @@ from routers.media import router as media_router
 from routers.calendar import router as calendar_router
 from routers.water import router as water_router
 from routers.weight import router as weight_router
+from routers.menu import router as menu_router
 
 
 load_dotenv()
@@ -49,6 +50,8 @@ app.include_router(media_router)
 app.include_router(calendar_router)
 app.include_router(water_router)
 app.include_router(weight_router)
+app.include_router(menu_router)
+
 @app.get("/")
 def root():
     return {"status": "ok", "version": "2.0"}

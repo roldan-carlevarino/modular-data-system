@@ -253,3 +253,111 @@ def delete_menu_item(item_id: int):
         raise HTTPException(status_code=404, detail="Menu item not found")
     
     return {"deleted": True, "id": item_id}
+
+
+# ==========================================================
+#                    MEAL TRACKING
+# ==========================================================
+
+# GET /menu/tracking/today - Get today's meal completion status
+@router.get("/tracking/today")
+def get_today_tracking():
+    """Get meal completion status for today"""
+    today = date.today()
+    weekday = today.weekday()
+    
+    conn = _get_conn()
+    cur = conn.cursor()
+    
+    # Get today's menu
+    cur.execute("""
+        SELECT id, name, occurrence
+        FROM calories_menu
+        WHERE weekday = %s
+        ORDER BY occurrence
+    """, (weekday,))
+    menu_rows = cur.fetchall()
+    
+    # Get completion status
+    cur.execute("""
+        SELECT occurrence, completed
+        FROM calories_mealtrack
+        WHERE date = %s
+    """, (today,))
+    tracking_rows = cur.fetchall()
+    tracking_map = {r[0]: r[1] for r in tracking_rows}
+    
+    cur.close()
+    conn.close()
+    
+    meals = []
+    for r in menu_rows:
+        meals.append({
+            "id": r[0],
+            "name": r[1],
+            "occurrence": r[2],
+            "completed": tracking_map.get(r[2], False)
+        })
+    meals.sort(key=lambda x: _order_occurrence(x["occurrence"]))
+    
+    completed_count = sum(1 for m in meals if m["completed"])
+    
+    return {
+        "date": today.isoformat(),
+        "meals": meals,
+        "completed": completed_count,
+        "total": len(meals)
+    }
+
+
+# POST /menu/tracking/toggle - Toggle meal completion
+@router.post("/tracking/toggle")
+def toggle_meal(occurrence: str):
+    """Toggle completion status for a meal occurrence (morning/afternoon/evening)"""
+    if occurrence not in OCCURRENCE_ORDER:
+        raise HTTPException(status_code=400, detail="Invalid occurrence. Use: morning, afternoon, evening")
+    
+    today = date.today()
+    
+    conn = _get_conn()
+    cur = conn.cursor()
+    
+    try:
+        # Check current status
+        cur.execute("""
+            SELECT completed FROM calories_mealtrack
+            WHERE date = %s AND occurrence = %s
+        """, (today, occurrence))
+        row = cur.fetchone()
+        
+        if row is None:
+            # Insert new record as true (first toggle = completed)
+            cur.execute("""
+                INSERT INTO calories_mealtrack (date, occurrence, completed)
+                VALUES (%s, %s, true)
+                RETURNING completed
+            """, (today, occurrence))
+        else:
+            # Toggle existing
+            cur.execute("""
+                UPDATE calories_mealtrack
+                SET completed = NOT completed
+                WHERE date = %s AND occurrence = %s
+                RETURNING completed
+            """, (today, occurrence))
+        
+        new_status = cur.fetchone()[0]
+        conn.commit()
+        
+        return {
+            "date": today.isoformat(),
+            "occurrence": occurrence,
+            "completed": new_status
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()

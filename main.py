@@ -19,6 +19,7 @@ from routers.calendar import router as calendar_router
 from routers.water import router as water_router
 from routers.weight import router as weight_router
 from routers.menu import router as menu_router
+from routers.welfare import router as welfare_router
 
 
 load_dotenv()
@@ -51,6 +52,7 @@ app.include_router(calendar_router)
 app.include_router(water_router)
 app.include_router(weight_router)
 app.include_router(menu_router)
+app.include_router(welfare_router)
 
 @app.get("/")
 def root():

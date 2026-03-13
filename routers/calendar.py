@@ -357,6 +357,7 @@ def get_month_summary(year: int = Query(...), month: int = Query(...)):
             item_times AS (
                 SELECT
                     ci.id,
+                    ci.featured,
                     COALESCE(
                         ci.start_time,
                         cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
@@ -373,7 +374,8 @@ def get_month_summary(year: int = Query(...), month: int = Query(...)):
             )
             SELECT
                 ds.day,
-                COUNT(DISTINCT it.id) AS items_count
+                COUNT(DISTINCT it.id) AS items_count,
+                COUNT(DISTINCT it.id) FILTER (WHERE it.featured = true) AS featured_count
             FROM day_series ds
             LEFT JOIN item_times it
               ON it.item_start < (ds.day + INTERVAL '1 day')
@@ -389,6 +391,7 @@ def get_month_summary(year: int = Query(...), month: int = Query(...)):
             {
                 "day": r[0].isoformat(),
                 "items_count": int(r[1]),
+                "featured_count": int(r[2]),
             }
             for r in rows
         ]

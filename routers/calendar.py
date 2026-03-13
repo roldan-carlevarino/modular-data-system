@@ -371,7 +371,8 @@ def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default
                         cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
                     ) + make_interval(mins => COALESCE(ci.duration_minutes, 60))
                 ) AS event_end,
-                COALESCE(ci.duration_minutes, 60) AS duration_minutes
+                COALESCE(ci.duration_minutes, 60) AS duration_minutes,
+                ci.featured
             FROM calendar_item ci
             LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
             WHERE COALESCE(
@@ -400,6 +401,7 @@ def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default
                 "start_time": r[3].isoformat() if r[3] else None,
                 "end_time": r[4].isoformat() if r[4] else None,
                 "duration_minutes": r[5],
+                "featured": r[6],
             }
             for r in rows
         ]
@@ -422,6 +424,39 @@ def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default
             conn.close()
 
 
+@router.patch("/item/{item_id}/featured")
+def toggle_featured(item_id: int, payload: dict):
+    """Set or toggle the featured flag on a calendar item."""
+    conn = None
+    cur = None
+    try:
+        featured = payload.get("featured")
+        conn = _connect()
+        cur = conn.cursor()
+        if featured is None:
+            cur.execute("UPDATE calendar_item SET featured = NOT featured WHERE id = %s RETURNING featured", (item_id,))
+        else:
+            cur.execute("UPDATE calendar_item SET featured = %s WHERE id = %s RETURNING featured", (bool(featured), item_id))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "Calendar item not found")
+        conn.commit()
+        return {"ok": True, "item_id": item_id, "featured": row[0]}
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(500, f"Failed to toggle featured: {str(e)}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 @router.post("/slot/{slot_id}/item")
 def upsert_slot_item(slot_id: int, payload: dict):
     conn = None
@@ -434,6 +469,7 @@ def upsert_slot_item(slot_id: int, payload: dict):
         start_minute = int(payload.get("start_minute") or 0)
         item_id = payload.get("item_id")
         item_id = int(item_id) if item_id is not None else None
+        featured = bool(payload.get("featured", False))
 
         provided_start_time = payload.get("start_time")
         provided_end_time = payload.get("end_time")
@@ -494,10 +530,11 @@ def upsert_slot_item(slot_id: int, payload: dict):
                     duration_minutes = %s,
                     start_minute = %s,
                     start_time = %s,
-                    end_time = %s
+                    end_time = %s,
+                    featured = %s
                 WHERE id = %s
                 """,
-                (title, item_kind, duration_minutes, start_minute, start_dt, end_dt, item_id),
+                (title, item_kind, duration_minutes, start_minute, start_dt, end_dt, featured, item_id),
             )
         else:
             cur.execute(
@@ -520,12 +557,13 @@ def upsert_slot_item(slot_id: int, payload: dict):
                     duration_minutes,
                     start_minute,
                     start_time,
-                    end_time
+                    end_time,
+                    featured
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (slot_id, item_kind, title, next_position, duration_minutes, start_minute, start_dt, end_dt),
+                (slot_id, item_kind, title, next_position, duration_minutes, start_minute, start_dt, end_dt, featured),
             )
             item_id = cur.fetchone()[0]
 

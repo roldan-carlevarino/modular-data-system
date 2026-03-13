@@ -119,6 +119,74 @@ def _first_item_in_slot(cur, slot_id: int):
     return cur.fetchone()
 
 
+def _apply_template_if_empty(cur, target_day: date):
+    """Apply weekly template items for *target_day* when it has no items yet."""
+    day_start = datetime.combine(target_day, time.min)
+    day_end = day_start + timedelta(days=1)
+
+    cur.execute(
+        """
+        SELECT 1 FROM calendar_item ci
+        LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+        WHERE COALESCE(ci.start_time, cs.start_time) >= %s
+          AND COALESCE(ci.start_time, cs.start_time) < %s
+        LIMIT 1
+        """,
+        (day_start, day_end),
+    )
+    if cur.fetchone():
+        return  # day already has items
+
+    weekday = target_day.weekday()
+    cur.execute(
+        """
+        SELECT start_hour, start_minute, duration_minutes, title, item_kind
+        FROM calendar_weekly_template
+        WHERE day_of_week = %s AND active = true
+        ORDER BY start_hour, start_minute, id
+        """,
+        (weekday,),
+    )
+    templates = cur.fetchall()
+
+    for start_hour, start_minute_offset, duration_minutes, tpl_title, item_kind in templates:
+        slot_hour_start = datetime.combine(target_day, time(hour=start_hour))
+        slot_hour_end = slot_hour_start + timedelta(hours=1)
+        item_start = slot_hour_start + timedelta(minutes=start_minute_offset)
+        item_end = item_start + timedelta(minutes=duration_minutes)
+
+        cur.execute(
+            "SELECT id FROM calendar_slot WHERE start_time = %s AND end_time = %s LIMIT 1",
+            (slot_hour_start, slot_hour_end),
+        )
+        slot_row = cur.fetchone()
+        if slot_row:
+            slot_id = slot_row[0]
+        else:
+            cur.execute(
+                "INSERT INTO calendar_slot (start_time, end_time) VALUES (%s, %s) RETURNING id",
+                (slot_hour_start, slot_hour_end),
+            )
+            slot_id = cur.fetchone()[0]
+
+        cur.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM calendar_item WHERE calendar_slot_id = %s",
+            (slot_id,),
+        )
+        next_pos = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            INSERT INTO calendar_item (
+                calendar_slot_id, item_kind, title, position,
+                duration_minutes, start_minute, start_time, end_time, featured
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)
+            """,
+            (slot_id, item_kind, tpl_title, next_pos, duration_minutes, start_minute_offset, item_start, item_end),
+        )
+
+
 @router.get("/day")
 def get_day_calendar(day: Optional[str] = Query(default=None)):
     target_day = _parse_day(day)
@@ -133,6 +201,7 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
         cur = conn.cursor()
 
         _ensure_day_slots(cur, target_day)
+        _apply_template_if_empty(cur, target_day)
         conn.commit()
 
         cur.execute(
@@ -159,7 +228,8 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
                 i.duration_minutes,
                 i.start_minute,
                 i.start_time,
-                i.end_time
+                i.end_time,
+                i.featured
             FROM uniq_slots s
             LEFT JOIN LATERAL (
                 SELECT
@@ -171,7 +241,8 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
                     ci.duration_minutes,
                     ci.start_minute,
                     ci.start_time,
-                    ci.end_time
+                    ci.end_time,
+                    ci.featured
                 FROM calendar_item ci
                 WHERE (
                     ci.start_time IS NOT NULL
@@ -217,6 +288,7 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
 
             item_start_dt = r[10]
             item_end_dt = r[11]
+            item_featured = r[12]
             if item_start_dt is not None:
                 rel_start = int((item_start_dt - slot_start).total_seconds() // 60)
                 start_minute = max(0, rel_start)
@@ -237,6 +309,7 @@ def get_day_calendar(day: Optional[str] = Query(default=None)):
                 "start_minute": start_minute,
                 "start_time": item_start_dt.isoformat() if item_start_dt else None,
                 "end_time": item_end_dt.isoformat() if item_end_dt else None,
+                "featured": item_featured or False,
             }
             slots_map[slot_id]["items"].append(item_obj)
 

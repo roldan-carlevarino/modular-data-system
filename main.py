@@ -16,6 +16,7 @@ from routers.gym import router as gym_router
 from routers.projects import router as projects_router
 from routers.media import router as media_router
 from routers.calendar import router as calendar_router
+from routers.calendar_template import router as calendar_template_router
 from routers.water import router as water_router
 from routers.weight import router as weight_router
 from routers.menu import router as menu_router
@@ -23,6 +24,39 @@ from routers.welfare import router as welfare_router
 
 
 load_dotenv()
+
+
+def _run_migrations():
+    """Idempotent schema migrations executed once at startup."""
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        # Add featured boolean to calendar_item (default false)
+        cur.execute("""
+            ALTER TABLE calendar_item
+            ADD COLUMN IF NOT EXISTS featured BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_weekly_template (
+                id SERIAL PRIMARY KEY,
+                day_of_week INTEGER NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+                start_hour INTEGER NOT NULL CHECK (start_hour BETWEEN 0 AND 23),
+                start_minute INTEGER NOT NULL DEFAULT 0 CHECK (start_minute BETWEEN 0 AND 59),
+                duration_minutes INTEGER NOT NULL DEFAULT 60 CHECK (duration_minutes > 0),
+                title TEXT NOT NULL,
+                item_kind TEXT NOT NULL DEFAULT 'note',
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"[migration] warning: {e}")
+
+
+_run_migrations()
 
 app = FastAPI()
 
@@ -49,6 +83,7 @@ app.include_router(gym_router)
 app.include_router(projects_router)
 app.include_router(media_router)
 app.include_router(calendar_router)
+app.include_router(calendar_template_router)
 app.include_router(water_router)
 app.include_router(weight_router)
 app.include_router(menu_router)

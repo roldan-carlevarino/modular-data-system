@@ -5,6 +5,8 @@ import psycopg2
 import os
 from datetime import date
 
+from routers.tz import local_today
+
 router: APIRouter = APIRouter(prefix="/gym", tags=["Gym"])
 __all__ = ["router"]
 
@@ -246,7 +248,7 @@ def add_exercise_to_session(session_id: int, payload: ExerciseLogCreate):
 # GET /gym/sessions/today - Get today's session (or create one)
 @router.get("/sessions/today")
 def get_today_session(routine_id: Optional[int] = None):
-    today = date.today()
+    today = local_today()
     conn = _get_conn()
     cur = conn.cursor()
     
@@ -340,7 +342,7 @@ def get_today_session(routine_id: Optional[int] = None):
 # POST /gym/sessions/today/exercises - Add exercise to today's session
 @router.post("/sessions/today/exercises")
 def add_exercise_to_today(payload: ExerciseLogCreate):
-    today = date.today()
+    today = local_today()
     conn = _get_conn()
     cur = conn.cursor()
     

@@ -1,10 +1,13 @@
 import psycopg2
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Import all routers
+load_dotenv()
+
+# Import all routers (AFTER load_dotenv so env vars are available)
+from routers.auth import router as auth_router, get_current_user
 from routers.rss import router as rss_router
 from routers.tasks import router as tasks_router
 from routers.pomodoro import router as pomodoro_router
@@ -21,9 +24,6 @@ from routers.water import router as water_router
 from routers.weight import router as weight_router
 from routers.menu import router as menu_router
 from routers.welfare import router as welfare_router
-
-
-load_dotenv()
 
 
 def _run_migrations():
@@ -64,30 +64,33 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Auth router (public - no token required)
+app.include_router(auth_router)
 
+# All other routers require authentication
+_auth = [Depends(get_current_user)]
 
-
-app.include_router(rss_router)
-app.include_router(tasks_router)
-app.include_router(pomodoro_router)
-app.include_router(intel_router)
-app.include_router(logs_router)
-app.include_router(shopping_router)
-app.include_router(plaza_router)
-app.include_router(gym_router)
-app.include_router(projects_router)
-app.include_router(media_router)
-app.include_router(calendar_router)
-app.include_router(calendar_template_router)
-app.include_router(water_router)
-app.include_router(weight_router)
-app.include_router(menu_router)
-app.include_router(welfare_router)
+app.include_router(rss_router, dependencies=_auth)
+app.include_router(tasks_router, dependencies=_auth)
+app.include_router(pomodoro_router, dependencies=_auth)
+app.include_router(intel_router, dependencies=_auth)
+app.include_router(logs_router, dependencies=_auth)
+app.include_router(shopping_router, dependencies=_auth)
+app.include_router(plaza_router, dependencies=_auth)
+app.include_router(gym_router, dependencies=_auth)
+app.include_router(projects_router, dependencies=_auth)
+app.include_router(media_router, dependencies=_auth)
+app.include_router(calendar_router, dependencies=_auth)
+app.include_router(calendar_template_router, dependencies=_auth)
+app.include_router(water_router, dependencies=_auth)
+app.include_router(weight_router, dependencies=_auth)
+app.include_router(menu_router, dependencies=_auth)
+app.include_router(welfare_router, dependencies=_auth)
 
 @app.get("/")
 def root():

@@ -3,6 +3,8 @@ import psycopg2
 import os
 from datetime import date, datetime, timezone
 
+from routers.tz import local_today
+
 router = APIRouter(prefix="/pomodoro", tags=["Pomodoro"]) 
 
 def now():
@@ -413,7 +415,7 @@ def todays_pomodoros():
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
-    today = date.today()
+    today = local_today()
 
     cur.execute("""
         SELECT

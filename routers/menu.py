@@ -5,6 +5,8 @@ import psycopg2
 import os
 from datetime import date
 
+from routers.tz import local_today
+
 router: APIRouter = APIRouter(prefix="/menu", tags=["Menu"])
 __all__ = ["router"]
 
@@ -90,7 +92,7 @@ def get_all_menu():
 @router.get("/today")
 def get_today_menu():
     """Get menu for today based on current weekday"""
-    today = date.today()
+    today = local_today()
     weekday = today.weekday()  # 0=Monday, 6=Sunday
     
     conn = _get_conn()
@@ -263,7 +265,7 @@ def delete_menu_item(item_id: int):
 @router.get("/tracking/today")
 def get_today_tracking():
     """Get meal completion status for today"""
-    today = date.today()
+    today = local_today()
     weekday = today.weekday()
     
     conn = _get_conn()
@@ -317,7 +319,7 @@ def toggle_meal(occurrence: str):
     if occurrence not in OCCURRENCE_ORDER:
         raise HTTPException(status_code=400, detail="Invalid occurrence. Use: morning, afternoon, evening")
     
-    today = date.today()
+    today = local_today()
     
     conn = _get_conn()
     cur = conn.cursor()

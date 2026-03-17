@@ -5,6 +5,8 @@ import os
 import psycopg2
 from fastapi import APIRouter, HTTPException, Query
 
+from routers.tz import local_today, local_now
+
 
 router = APIRouter(prefix="/calendar", tags=["Calendar"])
 
@@ -15,7 +17,7 @@ def _connect():
 
 def _parse_day(day: Optional[str]) -> date:
     if not day:
-        return date.today()
+        return local_today()
     try:
         return date.fromisoformat(day)
     except ValueError:
@@ -424,7 +426,7 @@ def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default
     cur = None
 
     try:
-        window_start = datetime.now()
+        window_start = local_now().replace(tzinfo=None)
         window_end = window_start + timedelta(days=days)
 
         conn = _connect()

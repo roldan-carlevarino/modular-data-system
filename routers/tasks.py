@@ -3,6 +3,8 @@ import psycopg2
 import os
 from datetime import date, datetime
 
+from routers.tz import local_today, local_now
+
 router = APIRouter(prefix="/tasks", tags=["Tasks"]) 
 
 
@@ -20,7 +22,7 @@ def get_tasks_today():
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
 
-        today = date.today()
+        today = local_today()
 
         cur.execute("""
             SELECT
@@ -67,8 +69,8 @@ def get_tasks_today_current_occurrence():
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
 
-        today = date.today()
-        occurrence = _current_occurrence_by_hour(datetime.now().hour)
+        today = local_today()
+        occurrence = _current_occurrence_by_hour(local_now().hour)
 
         cur.execute(
             """
@@ -121,8 +123,8 @@ def refresh_tasks_today():
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
         
-        actual_hour = datetime.now().hour
-        today = date.today()
+        actual_hour = local_now().hour
+        today = local_today()
         
         # Determinar transición
         transitions = []
@@ -171,7 +173,7 @@ def move_task_today(payload: dict):
 
         conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
         cur = conn.cursor()
-        today = date.today()
+        today = local_today()
 
         STEP = 20
 
@@ -285,7 +287,7 @@ def update_task_today(payload: dict):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
-    today = date.today()
+    today = local_today()
 
     cur.execute("""
         UPDATE task_occurrences

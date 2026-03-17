@@ -5,6 +5,8 @@ from datetime import date, datetime, timedelta
 import psycopg2
 import os
 
+from routers.tz import local_today, local_now
+
 router = APIRouter(prefix="/welfare", tags=["Welfare"])
 
 # ---------- Config ----------
@@ -233,7 +235,7 @@ def get_welfare_index(days: int = Query(default=30, ge=1, le=90)):
         conn = _get_conn()
         cur = conn.cursor()
         
-        today = date.today()
+        today = local_today()
         
         # Calculate current day's full breakdown
         current = _calc_daily_index(cur, today)
@@ -303,14 +305,14 @@ def get_mental_today():
             SELECT sleep_hours, stress, journal_note
             FROM mental_log
             WHERE date = %s
-        """, (date.today(),))
+        """, (local_today(),))
         row = cur.fetchone()
         
         if not row:
             raise HTTPException(404, "No entry for today")
         
         return {
-            "date": date.today().isoformat(),
+            "date": local_today().isoformat(),
             "sleep_hours": float(row[0]) if row[0] else None,
             "stress": row[1],
             "journal_note": row[2]
@@ -338,7 +340,7 @@ def log_mental(payload: MentalLogCreate):
         cur = conn.cursor()
         _ensure_mental_tables(cur)
         
-        today = date.today()
+        today = local_today()
         
         # Check if entry exists for today
         cur.execute("SELECT id FROM mental_log WHERE date = %s", (today,))
@@ -393,7 +395,7 @@ def get_mental_history(days: int = Query(default=30, ge=1, le=90)):
         _ensure_mental_tables(cur)
         conn.commit()
         
-        start_date = date.today() - timedelta(days=days)
+        start_date = local_today() - timedelta(days=days)
         
         cur.execute("""
             SELECT date, sleep_hours, stress, journal_note

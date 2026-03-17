@@ -8,3 +8,5 @@ python-multipart
 pdfplumber
 python-docx
 openai
+python-jose[cryptography]
+bcrypt

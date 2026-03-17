@@ -4,6 +4,8 @@ from datetime import date
 import psycopg2
 import os
 
+from routers.tz import local_today
+
 router = APIRouter(prefix="/water", tags=["Water"]) 
 
 
@@ -37,7 +39,7 @@ def _ensure_water_tables(cur):
 
 @router.get("/today")
 def get_today_water():
-    today = date.today()
+    today = local_today()
 
     conn = None
     cur = None
@@ -78,7 +80,7 @@ def get_today_water():
 @router.post("/drink")
 def event_water(payload: WaterEventPayload):
     
-    today = date.today()
+    today = local_today()
 
     conn = None
     cur = None

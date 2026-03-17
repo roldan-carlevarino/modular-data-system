@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import psycopg2
 
+from routers.tz import local_today
+
 
 router: APIRouter = APIRouter(prefix="/weight", tags=["Weight"])
 
@@ -28,7 +30,7 @@ def _ensure_weight_table(cur):
 
 @router.get("/today")
 def get_today_weight():
-    today = date.today()
+    today = local_today()
 
     conn = None
     cur = None
@@ -68,7 +70,7 @@ def get_today_weight():
 
 @router.post("/new")
 def add_new_weight(payload: WeightEventPayload):
-    today = date.today()
+    today = local_today()
 
     conn = None
     cur = None

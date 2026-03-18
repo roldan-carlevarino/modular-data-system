@@ -1,0 +1,508 @@
+/* SCHEDULE TAB LAYOUT */
+#tab2:checked ~ .tab-content .c2 {
+  display: grid;
+  grid-template-columns: 1fr 3fr;
+  grid-template-rows: auto 1fr;
+  gap: var(--spacing-md);
+  height: 100%;
+  max-height: 100vh;
+  grid-template-areas: 
+    "month   calendar"
+    "tasks   calendar";
+}
+
+.month-calendar-box {
+  grid-area: month;
+}
+
+.tasks-box {
+  grid-area: tasks;
+  text-align: center;
+  overflow: hidden;
+}
+
+.calendar-box {
+  grid-area: calendar;
+  overflow: hidden;
+
+
+}
+
+/* TASK SECTIONS */
+.task-section.collapsed .task-list {
+    display: none;
+}
+
+.task-section-title {
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 2px;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.task-section.current-occurrence > .task-section-title {
+    color: var(--accent-primary);
+}
+
+.tasks-box h2 {
+  margin: 0 0 0.3rem 0;
+}
+
+/* Aquí irían más estilos del calendario, tasks, etc. */
+
+/* ===== DAILY SCHEDULE STYLES ===== */
+
+.schedule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.2rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.schedule-header h2 {
+  margin: 0;
+}
+
+.schedule-create-btn {
+  border: var(--border-thin) solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 0.28rem 0.65rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.schedule-create-btn:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+}
+
+.month-calendar-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0;
+  text-align: center;
+  flex: 1;
+}
+
+.month-calendar-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.month-calendar-nav {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: var(--border-thin) solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 0.95rem;
+  padding: 0;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.month-calendar-nav:hover {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+}
+
+.month-calendar-weekdays,
+.month-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.month-calendar-weekdays span {
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.month-calendar-grid {
+  margin-top: 0.35rem;
+}
+
+.month-day {
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.month-day:hover {
+  background: var(--bg-hover);
+}
+
+.month-day.other-month {
+  color: var(--text-quaternary);
+  background: transparent;
+}
+
+.month-day.other-month:hover {
+  background: var(--bg-hover);
+}
+
+.month-day.today {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+  color: var(--accent-solid);
+  font-weight: 700;
+}
+
+.month-day.selected {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.month-day.has-activity {
+  border-color: var(--color-success);
+}
+
+.month-day.has-activity::after {
+  content: '';
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #68d391;
+  bottom: 2px;
+  right: 2px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25);
+}
+
+.month-day.has-featured {
+  border-color: #f6c343;
+}
+.month-day.has-featured::before {
+  content: '★';
+  position: absolute;
+  font-size: 7px;
+  line-height: 1;
+  bottom: 1px;
+  left: 2px;
+  color: #f6c343;
+}
+
+.month-day {
+  position: relative;
+}
+
+.activity-editor {
+  display: grid;
+  grid-template-columns: 54px 58px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+
+.slot-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slot-task-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.slot-task-title {
+  background: var(--bg-primary);
+  border: var(--border-thin) solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.82em;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.slot-task-title:hover {
+  border-color: var(--accent-primary);
+}
+
+.slot-task-duration,
+.slot-task-delete,
+.slot-task-star,
+.slot-add-btn {
+  border: var(--border-thin) solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.slot-task-duration {
+  padding: 5px 7px;
+  font-size: 0.72em;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  opacity: 0.6;
+}
+.slot-task-duration:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+  border-color: var(--accent-primary);
+}
+
+.slot-task-delete {
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  font-size: 0.95em;
+  opacity: 0.4;
+  transition: opacity 0.15s, color 0.15s, background 0.15s, border-color 0.15s;
+}
+.slot-task-delete:hover {
+  opacity: 1;
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.slot-task-star {
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  font-size: 0.85em;
+  opacity: 0.45;
+  transition: opacity 0.15s, color 0.15s;
+}
+.slot-task-star.active {
+  opacity: 1;
+  color: #f6c343;
+}
+.slot-task-star:hover {
+  opacity: 1;
+}
+
+.slot-add-btn {
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 0.95em;
+  color: var(--text-tertiary);
+  opacity: 0.4;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.slot-add-btn:hover {
+  opacity: 1;
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.slot-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.slot-empty-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.slot-empty-row .activity-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.slot-draggable {
+  cursor: grab;
+}
+
+.slot-draggable.dragging {
+  opacity: 0.55;
+}
+
+.time-input {
+  width: 100%;
+  padding: 6px 6px;
+  text-align: center;
+  background: var(--bg-primary);
+  border: var(--border-thin) solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.76em;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.time-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.schedule {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  
+  display: flex;
+  flex-direction: column;
+}
+
+.schedule-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.schedule-hours {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.hour-slot {
+  display: grid;
+  grid-template-columns: 50px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.hour-slot:hover {
+  background: var(--bg-hover);
+}
+
+.hour-slot.current-hour {
+  background: var(--bg-tertiary);
+  border-left-color: var(--accent-primary);
+}
+
+.hour-label {
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+  text-align: right;
+  padding-right: 5px;
+}
+
+.hour-slot.current-hour .hour-label {
+  color: var(--accent-primary);
+}
+
+.activity-input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg-primary);
+  border: var(--border-thin) solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85em;
+  outline: none;
+  transition: all 0.2s ease;
+  cursor: text;
+}
+
+.activity-input.has-content {
+  cursor: grab;
+}
+
+.activity-input.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.hour-slot.drag-over {
+  background: var(--bg-tertiary);
+  border-left-color: var(--accent-primary);
+  transform: scale(1.02);
+}
+
+.activity-input::placeholder {
+  color: var(--text-quaternary);
+}
+
+.activity-input:focus {
+  background: var(--bg-secondary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.activity-input:not(:placeholder-shown) {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+}
+
+/* Scrollbar styling */
+.schedule-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.schedule-container::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
+
+.schedule-container::-webkit-scrollbar-thumb {
+  background: var(--accent-primary);
+  border-radius: 4px;
+  opacity: 0.5;
+}
+
+.schedule-container::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-hover);
+}
+
+.task-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0 0 0.4rem 0;
+}
+
+.task-list li {
+  color: var(--text-secondary);
+  font-style: italic;
+  cursor: pointer;
+}
+
+.task-list li.completed, .slot-task-title.completed {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  transition: all 0.2s;
+}
+
+.task-list li, .slot-task-title {
+  transition: all 0.2s;
+}
+
+.task-list input[type="checkbox"] {
+  display: none;
+}
+

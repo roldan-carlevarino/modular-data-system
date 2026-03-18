@@ -1,0 +1,216 @@
+/* ==============================
+   RSS LAYOUT
+   ============================== */
+
+.rss-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-bottom: 2rem;
+}
+
+.rss-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+/* ---- Tabs ---- */
+.rss-tabs {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.rss-tab {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.rss-tab:hover {
+  background: var(--accent-light);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+.rss-tab.active {
+  background: var(--accent-primary);
+  color: var(--accent-solid);
+  border-color: var(--accent-hover);
+}
+
+/* ---- Controls ---- */
+.rss-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.rss-limit-select {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.rss-refresh-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-tertiary);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.rss-refresh-btn:hover {
+  background: var(--accent-light);
+  color: var(--accent-solid);
+}
+
+/* ---- Feed ---- */
+.rss-feed {
+  padding: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+/* ---- States ---- */
+.rss-loading, .rss-error, .rss-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-quaternary);
+  font-style: italic;
+  font-size: 0.88rem;
+}
+.rss-error { color: #fc8181; }
+
+.rss-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-solid);
+  border-radius: 50%;
+  animation: rssSpin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+}
+@keyframes rssSpin { to { transform: rotate(360deg); } }
+
+/* ---- Article cards ---- */
+.rss-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  border-left: 3px solid var(--border-color);
+  transition: border-color 0.15s, background 0.15s;
+}
+.rss-card:hover {
+  background: var(--bg-quaternary);
+  border-left-color: var(--accent-primary);
+}
+.rss-card--ml:hover       { border-left-color: rgba(159,122,234,0.7); }
+.rss-card--markets:hover  { border-left-color: rgba(72,187,120,0.7); }
+.rss-card--quant:hover    { border-left-color: rgba(45,212,191,0.7); }
+.rss-card--politics:hover { border-left-color: rgba(246,173,85,0.7); }
+
+.rss-card-rank {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-quaternary);
+  min-width: 28px;
+  padding-top: 0.15rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.rss-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.rss-card-title {
+  font-size: 0.87rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  line-height: 1.4;
+  transition: color 0.15s;
+}
+.rss-card-title:hover { color: var(--accent-solid); }
+
+.rss-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.rss-source {
+  font-size: 0.71rem;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.rss-date {
+  font-size: 0.71rem;
+  color: var(--text-quaternary);
+}
+
+.rss-top-cat {
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.07rem 0.38rem;
+  border-radius: 999px;
+  border: 1px solid;
+}
+.rss-top-cat--ml       { color: #b794f4; background: rgba(159,122,234,0.15); border-color: rgba(159,122,234,0.3);  }
+.rss-top-cat--markets  { color: #68d391; background: rgba(72,187,120,0.12);   border-color: rgba(72,187,120,0.28);  }
+.rss-top-cat--quant    { color: #4fd1c5; background: rgba(45,212,191,0.12);   border-color: rgba(45,212,191,0.28);  }
+.rss-top-cat--politics { color: #f6ad55; background: rgba(246,173,85,0.12);   border-color: rgba(246,173,85,0.28);  }
+
+.rss-card-scores {
+  display: flex;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+}
+
+.rss-score-badge {
+  font-size: 0.68rem;
+  padding: 0.07rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.rss-score-badge strong {
+  font-weight: 700;
+  margin-left: 0.2rem;
+}

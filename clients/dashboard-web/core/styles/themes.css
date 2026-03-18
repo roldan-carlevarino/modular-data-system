@@ -1,0 +1,143 @@
+:root,
+:root[data-theme='dark-cyan'] {
+    --bg-primary: #1e1b2e;
+    --bg-secondary: #16131f;
+    --bg-tertiary: #23334a36; /* más cian */
+    --bg-quaternary: #28405a; /* más cian */
+    --bg-hover: #45e8fa0d; /* acento cian muy suave */
+
+    --text-primary: #ffffff;
+    --text-secondary: #ffffffcc;
+    --text-tertiary: #ffffff99;
+    --text-quaternary: #ffffff66;
+
+    --accent-primary: #45e8fa9d;
+    --accent-hover: #45e8facc;
+    --accent-active: #45e8fae6;
+    --accent-light: #45e8fa26;
+    --accent-solid: #45e8fa;
+    --accent-gradient: linear-gradient(135deg, #45e8fa 0%, #22d3ee 100%);
+
+    --accent-teal: #2dd4bf9d;         
+    --accent-teal-hover: #2dd4bfcc;
+    --accent-sky: #38bdf89d;          
+    --accent-sky-hover: #38bdf8cc;
+    --accent-mint: #34d3999d;
+    --accent-mint-hover: #34d399cc;
+
+    --color-success: #10b981;
+    --color-success-hover: #059669;
+    --color-error: #ef4444;
+    --color-error-hover: #dc2626;
+    --color-warning: #f59e0b;
+    --color-warning-hover: #d97706;
+    --color-info: #3b82f6;
+    --color-info-hover: #2563eb;
+
+    --border-color: #ffffff1a;
+    --shadow-sm: 0 2px 4px #0000004d;
+    --shadow-md: 0 4px 6px #0000004d;
+    --shadow-lg: 0 8px 16px #00000066;
+
+    --overlay-bg: rgba(10, 8, 20, 0.78);
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,0.3)'/%3E%3C/svg%3E");
+
+    --welfare-color: var(--accent-primary);
+}
+
+
+:root[data-theme='light-cyan'] {
+    --bg-primary: #f0f6f8;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e4f1f6;
+    --bg-quaternary: #cde7f0;
+    --bg-hover: #0891b20f;
+
+    --text-primary: #1a2e35;
+    --text-secondary: #1a2e35cc;
+    --text-tertiary: #1a2e3599;
+    --text-quaternary: #1a2e3566;
+
+    --accent-primary: #0891b2;
+    --accent-hover: #0e7490;
+    --accent-active: #155e75;
+    --accent-light: #0891b21a;
+    --accent-solid: #0891b2;
+    --accent-gradient: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+
+    --accent-teal: #0d9488;
+    --accent-teal-hover: #0f766e;
+    --accent-sky: #0284c7;
+    --accent-sky-hover: #0369a1;
+    --accent-mint: #059669;
+    --accent-mint-hover: #047857;
+
+
+    --color-success: #059669;
+    --color-success-hover: #047857;
+    --color-error: #dc2626;
+    --color-error-hover: #b91c1c;
+    --color-warning: #d97706;
+    --color-warning-hover: #b45309;
+    --color-info: #2563eb;
+    --color-info-hover: #1d4ed8;
+
+    --border-color: #0e749026;
+    --shadow-sm: 0 1px 3px #0e74900d;
+    --shadow-md: 0 4px 6px #0e749012;
+    --shadow-lg: 0 8px 16px #0e74901a;
+
+    --overlay-bg: rgba(0, 20, 30, 0.55);
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(26,46,53,0.3)'/%3E%3C/svg%3E");
+
+    --welfare-color: var(--accent-primary);
+}
+
+:root[data-theme='dark-purple']{
+    --bg-primary: #1e1b2e;
+    --bg-secondary: #16131f;
+    --bg-tertiary: #2a2640;
+    --bg-quaternary: #322e48;
+    --bg-hover: #6c5ce70d; /* acento morado muy suave */
+
+    --text-primary: #ffffff;
+    --text-secondary: #ffffffcc;
+    --text-tertiary: #ffffff99;
+    --text-quaternary: #ffffff66;
+
+    --accent-primary: #45e8fa9d;
+    --accent-hover: #45e8facc;
+    --accent-active: #45e8fae6;
+    --accent-light: #45e8fa26;
+    --accent-solid: #45e8fa;
+    --accent-gradient: linear-gradient(135deg, #45e8fa 0%, #22d3ee 100%);
+
+
+    /*CHANGE THESE COLORS TO PURPLE VARIANTS*/
+    
+    /* --accent-teal: #2dd4bf9d;         
+    --accent-teal-hover: #2dd4bfcc;
+    --accent-sky: #38bdf89d;          
+    --accent-sky-hover: #38bdf8cc;
+    --accent-mint: #34d3999d;
+    --accent-mint-hover: #34d399cc; */
+
+    --color-success: #10b981;
+    --color-success-hover: #059669;
+    --color-error: #ef4444;
+    --color-error-hover: #dc2626;
+    --color-warning: #f59e0b;
+    --color-warning-hover: #d97706;
+    --color-info: #3b82f6;
+    --color-info-hover: #2563eb;
+
+    --border-color: #ffffff1a;
+    --shadow-sm: 0 2px 4px #0000004d;
+    --shadow-md: 0 4px 6px #0000004d;
+    --shadow-lg: 0 8px 16px #00000066;
+
+    --overlay-bg: rgba(10, 8, 20, 0.78);
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,0.3)'/%3E%3C/svg%3E");
+
+    --welfare-color: var(--accent-primary);
+}

@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+psycopg2-binary
+python-dotenv
+arrow
+b2sdk
+python-multipart
+pdfplumber
+python-docx
+openai
+python-jose[cryptography]
+bcrypt

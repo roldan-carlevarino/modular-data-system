@@ -13,8 +13,15 @@ JWT_SECRET = os.getenv("JWT_SECRET", "fallback-secret-change-me")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24 * 7  # 7 days
 
-AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
-AUTH_PASSWORD_HASH = os.getenv("AUTH_PASSWORD_HASH", "")
+# Supported users: main admin (password-protected) + read-only demo (no password)
+USERS: dict[str, str] = {}  # username -> bcrypt hash
+
+_admin_user = os.getenv("AUTH_USERNAME", "")
+_admin_hash = os.getenv("AUTH_PASSWORD_HASH", "")
+if _admin_user and _admin_hash:
+    USERS[_admin_user] = _admin_hash
+
+DEMO_USERNAME = os.getenv("DEMO_USERNAME", "demo")  # exported for middleware
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -56,14 +63,20 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
 # ---- Endpoints ----
 @router.post("/login", response_model=Token)
 def login(form: OAuth2PasswordRequestForm = Depends()):
-    """Authenticate with username + password, returns a JWT."""
-    if form.username != AUTH_USERNAME:
+    """Authenticate with username + password, returns a JWT.
+    Demo user can log in without a password."""
+
+    # Demo user: no password required
+    if form.username == DEMO_USERNAME:
+        token = create_access_token(DEMO_USERNAME)
+        return {"access_token": token, "token_type": "bearer"}
+
+    # Regular users: verify credentials
+    stored_hash = USERS.get(form.username)
+    if not stored_hash:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not AUTH_PASSWORD_HASH:
-        raise HTTPException(status_code=500, detail="Auth not configured on server")
-
-    if not verify_password(form.password, AUTH_PASSWORD_HASH):
+    if not verify_password(form.password, stored_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = create_access_token(form.username)

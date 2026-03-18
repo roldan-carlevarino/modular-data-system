@@ -1,13 +1,16 @@
 import psycopg2
 import os
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
+from jose import JWTError, jwt
 
 load_dotenv()
 
 # Import all routers (AFTER load_dotenv so env vars are available)
-from routers.auth import router as auth_router, get_current_user
+from routers.auth import router as auth_router, get_current_user, DEMO_USERNAME, JWT_SECRET, JWT_ALGORITHM
 from routers.rss import router as rss_router
 from routers.tasks import router as tasks_router
 from routers.pomodoro import router as pomodoro_router
@@ -60,6 +63,32 @@ _run_migrations()
 
 app = FastAPI()
 
+# ---- Read-only middleware for demo user ----
+WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
+
+class DemoReadOnlyMiddleware(BaseHTTPMiddleware):
+    """Block write operations for the demo user."""
+    async def dispatch(self, request: Request, call_next):
+        if request.method in WRITE_METHODS:
+            # Allow login endpoint for everyone
+            if request.url.path == "/auth/login":
+                return await call_next(request)
+            # Extract JWT and check if it's the demo user
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                try:
+                    payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                    username = payload.get("sub", "")
+                    if username == DEMO_USERNAME:
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "Demo account is read-only"},
+                        )
+                except JWTError:
+                    pass  # let the auth dependency handle invalid tokens
+        return await call_next(request)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -68,6 +97,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(DemoReadOnlyMiddleware)
 
 # Auth router (public - no token required)
 app.include_router(auth_router)

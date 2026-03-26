@@ -108,9 +108,12 @@ window.fetch = function(url, options = {}) {
   const isAuthEndpoint = typeof url === 'string' && url.includes('/auth/login');
   const isApiCall = typeof url === 'string' && url.includes('api-dashboard-production');
 
-  // Short-circuit API calls when unauthenticated — prevents network spam from polling intervals
-  if (!token && isApiCall && !isAuthEndpoint) {
-    showLoginScreen();
+  // Short-circuit API calls when unauthenticated or token is expired —
+  // prevents network spam on initial load and from polling intervals
+  const authenticated = token && !isTokenExpired(token);
+  if (!authenticated && isApiCall && !isAuthEndpoint) {
+    if (token) clearAuthToken(); // remove stale/expired token
+    if (document.readyState !== 'loading') showLoginScreen();
     return Promise.resolve(new Response('{"detail":"Not authenticated"}', {
       status: 401,
       headers: { 'Content-Type': 'application/json' }

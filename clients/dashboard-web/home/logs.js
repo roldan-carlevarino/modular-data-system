@@ -25,19 +25,12 @@ async function loadLogs() {
   try {
     const res = await fetch(logs_API);
     const logs = await res.json();
-    
-    console.log('Logs received:', logs); 
-    
+    if (!Array.isArray(logs)) return;
+
     const logsList = document.getElementById('logs');
-    if (!logsList) {
-      console.error('logsList element not found');
-      return;
-    }
-    
-    // Limpiar lista
+    if (!logsList) return;
+
     logsList.innerHTML = '';
-    
-    // Renderizar cada log
     logs.forEach(log => {
       const li = document.createElement('li');
       li.className = 'log-item';

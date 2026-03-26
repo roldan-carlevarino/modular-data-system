@@ -108,6 +108,15 @@ window.fetch = function(url, options = {}) {
   const isAuthEndpoint = typeof url === 'string' && url.includes('/auth/login');
   const isApiCall = typeof url === 'string' && url.includes('api-dashboard-production');
 
+  // Short-circuit API calls when unauthenticated — prevents network spam from polling intervals
+  if (!token && isApiCall && !isAuthEndpoint) {
+    showLoginScreen();
+    return Promise.resolve(new Response('{"detail":"Not authenticated"}', {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    }));
+  }
+
   if (token && isApiCall && !isAuthEndpoint) {
     options.headers = options.headers || {};
     if (options.headers instanceof Headers) {

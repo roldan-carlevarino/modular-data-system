@@ -401,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res       = await fetch(`${API_URL}/pomodoro/today`);
             const pomodoros = await res.json();
-            if (!todayDiv) return;
+            if (!todayDiv || !Array.isArray(pomodoros)) return;
             if (pomodoros.length === 0) {
                 todayDiv.innerHTML = '<p style="opacity:0.5;font-size:0.85rem">No sessions today yet</p>';
                 return;

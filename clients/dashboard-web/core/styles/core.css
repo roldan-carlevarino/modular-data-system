@@ -45,7 +45,7 @@
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
-  font-family: system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   font-size: var(--font-base);
   line-height: 1.5;
   height: 100vh;

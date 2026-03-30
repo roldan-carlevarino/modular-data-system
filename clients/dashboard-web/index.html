@@ -31,6 +31,9 @@
   <!-- Mermaid (diagrams) -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 
+  <!-- Plotly (charts) -->
+  <script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
+
   <!-- Scripts -->
   <script src="core/auth.js"></script>
   <script defer src="core/core.js"></script>
@@ -702,6 +705,14 @@
         <div class="ingest-file-info" id="ingestFileInfo" style="display: none;">
           <span id="ingestFileName"></span>
           <button id="ingestClearFile" class="ingest-clear-btn">&#x2715;</button>
+        </div>
+        <div class="ingest-page-range" id="ingestPageRange" style="display: none;">
+          <label class="ingest-label">Pages (PDF only)</label>
+          <div class="ingest-page-range-inputs">
+            <input type="number" id="ingestPageFrom" class="ingest-page-input" placeholder="From" min="1">
+            <span class="ingest-page-sep">–</span>
+            <input type="number" id="ingestPageTo" class="ingest-page-input" placeholder="To" min="1">
+          </div>
         </div>
         <div class="ingest-options">
           <label class="ingest-label">Project context</label>

@@ -521,6 +521,39 @@ const DIAGRAM_TEMPLATES = {
 
 let _diagramIdCounter = 0;
 
+// ── Plotly chart rendering ──────────────────────────────────────
+function renderCharts(container) {
+  if (typeof Plotly === 'undefined') return;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const fontColor = isDark ? '#c9d1d9' : '#1f2328';
+  const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+
+  container.querySelectorAll('.chart-render:not(.chart-rendered)').forEach(div => {
+    try {
+      const json = div.dataset.chartJson;
+      const config = JSON.parse(json);
+      const layoutDefaults = {
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { family: 'Inter, system-ui, sans-serif', color: fontColor },
+        margin: { t: 40, r: 20, b: 50, l: 60 },
+        xaxis: { gridcolor: gridColor, zerolinecolor: gridColor },
+        yaxis: { gridcolor: gridColor, zerolinecolor: gridColor }
+      };
+      const layout = Object.assign({}, layoutDefaults, config.layout || {});
+      // Merge nested xaxis/yaxis if provided
+      if (config.layout?.xaxis) layout.xaxis = Object.assign({}, layoutDefaults.xaxis, config.layout.xaxis);
+      if (config.layout?.yaxis) layout.yaxis = Object.assign({}, layoutDefaults.yaxis, config.layout.yaxis);
+
+      Plotly.newPlot(div, config.data || [], layout, { responsive: true, displayModeBar: false });
+      div.classList.add('chart-rendered');
+    } catch (e) {
+      div.innerHTML = `<pre class="diagram-error">⚠ Chart error: ${e.message}</pre>`;
+    }
+  });
+}
+// ───────────────────────────────────────────────────────────────
+
 function extractMermaidCode(text) {
     // Check if content is a mermaid block
     const match = text.match(/^\s*```mermaid\s*\n([\s\S]*?)\n\s*```\s*$/);
@@ -1138,6 +1171,8 @@ function convertCellToDropdown(td, values, selected) {
 
 function contentToHtml(text) {
   if (!text) return '';
+  // Strip all post-it note prefixes before rendering
+  text = text.replace(/^(:::note\n[\s\S]*?\n:::\n?)+/, '');
 
   // 0. Check if the entire block is a Mermaid diagram
   const mermaidMatch = text.match(/^\s*```mermaid\s*\n([\s\S]*?)\n\s*```\s*$/);
@@ -1147,6 +1182,14 @@ function contentToHtml(text) {
     // Return a placeholder div; we'll render it async after insertion
     return `<div class="mermaid-render" data-mermaid-code="${code.replace(/"/g, '&quot;')}">\n<pre class="mermaid-loading">Loading diagram\u2026</pre></div>`;
   }
+
+  // 0b. Protect ```chart blocks before markdown parsing
+  const chartChunks = [];
+  const chartPH = (i) => `CHARTPLACEHOLDER${i}ENDCHART`;
+  text = text.replace(/```chart\n([\s\S]*?)\n```/g, (_, json) => {
+    chartChunks.push(json);
+    return chartPH(chartChunks.length - 1);
+  });
 
   // 1. Extract and protect math blocks before markdown parsing
   const mathChunks = [];
@@ -1176,6 +1219,15 @@ function contentToHtml(text) {
   mathChunks.forEach((chunk, i) => {
     const delim = chunk.display ? '$$' : '$';
     html = html.replace(placeholder(i), `${delim}${chunk.inner}${delim}`);
+  });
+
+  // 4. Restore chart blocks as placeholder divs (rendered later by renderCharts)
+  chartChunks.forEach((json, i) => {
+    const safe = json.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const div = `<div class="chart-render" data-chart-json="${safe}"></div>`;
+    const ph = chartPH(i);
+    html = html.replace(`<p>${ph}</p>`, div);
+    html = html.replace(ph, div);
   });
 
   return html;
@@ -1217,12 +1269,14 @@ async function renderKnowledge(blocks) {
 
       const content = document.createElement('div');
       content.className = 'block-content';
-      content.innerHTML = contentToHtml(await resolveB2Images(block.content));
+      const _blockParsed = parseNotes(block.content);
+      content.innerHTML = contentToHtml(await resolveB2Images(_blockParsed.body));
       content.dataset.originalContent = block.content;
 
       blockDiv.appendChild(header);
       blockDiv.appendChild(content);
       viewer.appendChild(blockDiv);
+      _blockParsed.notes.forEach((n, i) => addPostItToBlock(blockDiv, n, block.id, i));
   }
 
   renderMathInElement(viewer, {
@@ -1248,12 +1302,232 @@ async function renderKnowledge(blocks) {
     }
   });
 
+  // Render Plotly charts in view mode
+  renderCharts(viewer);
+
   if (isModifyingContents) {
     document.querySelectorAll('.edit-btn').forEach(btn => {
       btn.addEventListener('click', handleEditClick);
     });
     document.querySelectorAll('.delete-btn').forEach(btn => {
       btn.addEventListener('click', handleDeleteClick);
+    });
+
+    // Image resize: click on any img inside a block while in modify mode
+    document.querySelectorAll('.block-content img').forEach(img => {
+      img.style.cursor = 'pointer';
+      img.title = 'Click to resize';
+      img.addEventListener('click', handleImageResizeClick);
+    });
+  }
+}
+
+function handleImageResizeClick(e) {
+  e.stopPropagation();
+  const img = e.currentTarget;
+
+  // Remove any existing popover
+  document.querySelectorAll('.img-resize-popover').forEach(p => p.remove());
+
+  const currentWidth = img.getAttribute('width') || img.getAttribute('style')?.match(/width:\s*([^;]+)/)?.[1] || '';
+
+  const popover = document.createElement('div');
+  popover.className = 'img-resize-popover';
+  popover.innerHTML = `
+    <span class="img-resize-label">Width</span>
+    <input class="img-resize-input" type="text" value="${currentWidth}" placeholder="e.g. 400px, 60%">
+    <button class="img-resize-apply">Apply</button>
+    <button class="img-resize-cancel">✕</button>
+  `;
+
+  // Position below the image
+  const rect = img.getBoundingClientRect();
+  popover.style.cssText = `position:fixed;top:${rect.bottom + 6}px;left:${rect.left}px;z-index:9999`;
+  document.body.appendChild(popover);
+
+  const input = popover.querySelector('.img-resize-input');
+  input.focus();
+  input.select();
+
+  const applyResize = async () => {
+    const val = input.value.trim();
+    popover.remove();
+
+    // Update the img element
+    img.removeAttribute('width');
+    img.style.width = '';
+    if (val) img.setAttribute('width', val);
+
+    // Update the source text in dataset.originalContent
+    const contentDiv = img.closest('.block-content');
+    const blockDiv = img.closest('[data-block-id]');
+    if (!contentDiv || !blockDiv) return;
+
+    const blockId = blockDiv.dataset.blockId;
+    const src = img.getAttribute('src') || img.src;
+    let text = contentDiv.dataset.originalContent || '';
+
+    // Replace both <img ...> and ![alt](src) patterns for this image src
+    // Match <img ... src="src" ...> with or without width attr
+    text = text.replace(/<img([^>]*?)src="[^"]*?"([^>]*?)>/g, (match, pre, post) => {
+      if (!match.includes(src.split('?')[0].split('/').pop())) return match;
+      let attrs = (pre + post).replace(/\s*width="[^"]*"/, '').trim();
+      return val ? `<img${attrs ? ' ' + attrs : ''} src="${src}" width="${val}">` : `<img${attrs ? ' ' + attrs : ''} src="${src}">`;
+    });
+    // Match ![alt](src) markdown pattern
+    text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, msrc) => {
+      if (!msrc.includes(src.split('?')[0].split('/').pop())) return match;
+      return val ? `<img src="${msrc}" alt="${alt}" width="${val}">` : match;
+    });
+
+    contentDiv.dataset.originalContent = text;
+
+    // Persist to backend
+    try {
+      const typeSelect = blockDiv.querySelector('.block-type-editor');
+      const blockType = typeSelect ? typeSelect.value : (blockDiv.dataset.blockType || null);
+      await fetch(`${KNOWLEDGE_API_BASE}/knowledge/block/${blockId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, block_type: blockType })
+      });
+    } catch (err) {
+      console.error('Failed to save image resize:', err);
+    }
+  };
+
+  popover.querySelector('.img-resize-apply').addEventListener('click', applyResize);
+  popover.querySelector('.img-resize-cancel').addEventListener('click', () => popover.remove());
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') applyResize();
+    if (e.key === 'Escape') popover.remove();
+  });
+
+  // Close if clicking outside
+  setTimeout(() => {
+    document.addEventListener('click', function handler(ev) {
+      if (!popover.contains(ev.target)) {
+        popover.remove();
+        document.removeEventListener('click', handler);
+      }
+    });
+  }, 0);
+}
+
+// ===============================
+// POST-IT NOTES
+// ===============================
+
+function parseNotes(content) {
+  if (!content) return { notes: [], body: '' };
+  const notes = [];
+  let rest = content;
+  const pat = /^:::note\n([\s\S]*?)\n:::\n?/;
+  let m;
+  while ((m = rest.match(pat))) { notes.push(m[1]); rest = rest.slice(m[0].length); }
+  return { notes, body: rest };
+}
+
+function buildNotesContent(notes, body) {
+  const valid = (notes || []).filter(n => n.trim());
+  if (!valid.length) return body;
+  return valid.map(n => `:::note\n${n.trim()}\n:::`).join('\n') + '\n' + body;
+}
+
+function makeDraggable(el, container, storageKey) {
+  const handle = el.querySelector('.postit-handle') || el;
+  let startX, startY, startLeft, startTop;
+  handle.addEventListener('mousedown', e => {
+    if (e.target.closest('button, textarea')) return;
+    e.preventDefault();
+    const cRect = container.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startLeft = eRect.left - cRect.left;
+    startTop  = eRect.top  - cRect.top;
+    const onMove = e => {
+      el.style.left = (startLeft + e.clientX - startX) + 'px';
+      el.style.top  = (startTop  + e.clientY - startY) + 'px';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ top: el.style.top, left: el.style.left }));
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function addPostItToBlock(blockDiv, noteText, blockId, index) {
+  const postit = document.createElement('div');
+  postit.className = 'block-postit';
+  postit.dataset.blockId = blockId;
+  postit.dataset.noteIndex = index;
+  const safeText = contentToHtml(noteText);
+  const minKey = `postit-min-${blockId}-${index}`;
+  const isMinimized = localStorage.getItem(minKey) === '1';
+  postit.innerHTML = `
+    <div class="postit-handle">📌 <span class="postit-hint">drag</span><button class="postit-toggle" title="Minimize">${isMinimized ? '▲' : '▼'}</button></div>
+    <div class="postit-text" style="display:${isMinimized ? 'none' : ''}">${safeText}</div>
+    ${isModifyingContents ? '<button class="postit-delete" title="Delete note">×</button>' : ''}
+  `;
+  postit.classList.toggle('postit-minimized', isMinimized);
+  const posKey = `postit-pos-${blockId}-${index}`;
+  const saved = JSON.parse(localStorage.getItem(posKey) || 'null');
+  if (saved) {
+    postit.style.top = saved.top;
+    postit.style.left = saved.left;
+  } else if (index > 0) {
+    postit.style.top = '-10px';
+    postit.style.left = (20 + index * 170) + 'px';
+  }
+  blockDiv.appendChild(postit);
+  makeDraggable(postit, blockDiv, posKey);
+
+  // Minimize toggle
+  postit.querySelector('.postit-toggle').addEventListener('click', e => {
+    e.stopPropagation();
+    const textEl = postit.querySelector('.postit-text');
+    const btn = postit.querySelector('.postit-toggle');
+    const minimized = textEl.style.display === 'none';
+    textEl.style.display = minimized ? '' : 'none';
+    btn.textContent = minimized ? '▼' : '▲';
+    postit.classList.toggle('postit-minimized', !minimized);
+    localStorage.setItem(minKey, minimized ? '0' : '1');
+  });
+
+  // Render KaTeX inside the post-it
+  const textEl = postit.querySelector('.postit-text');
+  if (textEl) {
+    renderMathInElement(textEl, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false }
+      ],
+      throwOnError: false,
+      strict: false
+    });
+  }
+  if (isModifyingContents) {
+    postit.querySelector('.postit-delete').addEventListener('click', async e => {
+      e.stopPropagation();
+      if (!confirm('Delete this post-it note?')) return;
+      const contentDiv = blockDiv.querySelector('.block-content');
+      const { notes: _all, body } = parseNotes(contentDiv?.dataset.originalContent || '');
+      const noteIdx = parseInt(postit.dataset.noteIndex);
+      const updatedContent = buildNotesContent(_all.filter((_, i) => i !== noteIdx), body);
+      try {
+        await fetch(`${KNOWLEDGE_API_BASE}/knowledge/block/${blockId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: updatedContent, block_type: blockDiv.dataset.blockType || null })
+        });
+        if (contentDiv) contentDiv.dataset.originalContent = updatedContent;
+        postit.remove();
+        blockDiv.querySelectorAll('.block-postit').forEach((p, i) => { p.dataset.noteIndex = i; });
+        localStorage.removeItem(posKey);
+      } catch(err) { console.error('Failed to delete note:', err); }
     });
   }
 }
@@ -1278,7 +1552,8 @@ async function handleEditClick(event) {
             const codeArea = diagramContainer.querySelector('.diagram-code');
             textarea.value = wrapMermaidCode(codeArea.value);
         }
-        const newContent = textarea.value;
+        const _noteEls = contentDiv.querySelectorAll('.postit-note-editor');
+        const newContent = buildNotesContent(Array.from(_noteEls).map(el => el.value), textarea.value);
         const typeSelect = contentDiv.querySelector('.block-type-editor');
         const newType = typeSelect ? typeSelect.value : (blockDiv.dataset.blockType || null);
         
@@ -1303,7 +1578,11 @@ async function handleEditClick(event) {
             // Renderizar el HTML
             contentDiv.innerHTML = contentToHtml(await resolveB2Images(newContent));
             editBtn.textContent = 'Edit';
-            
+
+            // Re-render post-its
+            blockDiv.querySelectorAll('.block-postit').forEach(p => p.remove());
+            parseNotes(newContent).notes.forEach((n, i) => addPostItToBlock(blockDiv, n, blockId, i));
+
             // Renderizar KaTeX
             renderMathInElement(contentDiv, {
                 delimiters: [
@@ -1327,6 +1606,9 @@ async function handleEditClick(event) {
                     }
                 }
             });
+
+            // Render Plotly charts after save
+            renderCharts(contentDiv);
             
         } catch (error) {
             console.error('Error updating block:', error);
@@ -1337,6 +1619,7 @@ async function handleEditClick(event) {
         // EDITAR
         // ✅ Usar el contenido original (con $ y $$), no el renderizado
         const originalContent = contentDiv.dataset.originalContent || contentDiv.innerHTML;
+        const { notes: _editNotes, body: _editBody } = parseNotes(originalContent);
         const currentType = blockDiv.dataset.blockType || 'definition';
 
         const BLOCK_TYPES = ['definition','intuition','formula','example','proof','theorem','remark','exercise','summary'];
@@ -1344,9 +1627,15 @@ async function handleEditClick(event) {
           `<option value="${t}" ${t === currentType ? 'selected' : ''}>${t}</option>`
         ).join('');
         
+        // Remove post-it overlays while editing (shown as textareas below)
+        blockDiv.querySelectorAll('.block-postit').forEach(p => p.remove());
+
+        const _notesHtml = _editNotes.map(n =>
+          `<textarea class="postit-note-editor">${n}</textarea>`
+        ).join('');
         contentDiv.innerHTML = `
           <select class="block-type-editor">${typeOptions}</select>
-          <textarea class="block-editor">${originalContent}</textarea>
+          <textarea class="block-editor">${_editBody}</textarea>
           <div class="block-editor-toolbar">
             <label class="btn-upload-img" title="Upload image to B2">
               📎 Upload image
@@ -1354,9 +1643,61 @@ async function handleEditClick(event) {
             </label>
             <button type="button" class="btn-toggle-spreadsheet" title="Toggle spreadsheet view">📊 Spreadsheet</button>
             <button type="button" class="btn-toggle-diagram" title="Toggle diagram editor">🔀 Diagram</button>
+            <button type="button" class="btn-insert-chart" title="Insert Plotly chart template">📈 Chart</button>
             <span class="upload-status"></span>
-          </div>`;
+          </div>
+          <div class="postit-notes-editor-list">${_notesHtml}</div>
+          <button type="button" class="btn-add-postit">📌 Add post-it</button>`;
         editBtn.textContent = 'Save';
+
+        contentDiv.querySelector('.btn-add-postit').addEventListener('click', () => {
+          const list = contentDiv.querySelector('.postit-notes-editor-list');
+          const ta = document.createElement('textarea');
+          ta.className = 'postit-note-editor';
+          ta.placeholder = 'Write post-it note…';
+          list.appendChild(ta);
+          ta.focus();
+        });
+
+        // Insert chart template
+        const chartBtn = contentDiv.querySelector('.btn-insert-chart');
+        chartBtn.addEventListener('click', () => {
+          const ta = contentDiv.querySelector('.block-editor');
+          const template = [
+            '',
+            '```chart',
+            '{',
+            '  "data": [',
+            '    {',
+            '      "x": [0, 1, 2, 3, 4, 5],',
+            '      "y": [10, 8, 6, 4, 2, 0],',
+            '      "name": "Demand",',
+            '      "type": "scatter",',
+            '      "mode": "lines"',
+            '    },',
+            '    {',
+            '      "x": [0, 1, 2, 3, 4, 5],',
+            '      "y": [0, 2, 4, 6, 8, 10],',
+            '      "name": "Supply",',
+            '      "type": "scatter",',
+            '      "mode": "lines"',
+            '    }',
+            '  ],',
+            '  "layout": {',
+            '    "title": "Supply & Demand",',
+            '    "xaxis": { "title": "Quantity" },',
+            '    "yaxis": { "title": "Price" }',
+            '  }',
+            '}',
+            '```',
+            ''
+          ].join('\n');
+          const start = ta.selectionStart;
+          ta.value = ta.value.slice(0, start) + template + ta.value.slice(ta.selectionEnd);
+          ta.selectionStart = ta.selectionEnd = start + template.length;
+          ta.dispatchEvent(new Event('input'));
+          ta.focus();
+        });
 
         const textarea = contentDiv.querySelector('textarea');
         textarea.focus();
@@ -1499,7 +1840,14 @@ async function handleEditClick(event) {
                 if (!res.ok) throw new Error(await res.text());
                 const { b2_ref, path } = await res.json();
                 const filename = path.split('/').pop();
-                const md = `![${filename}](${b2_ref})`;
+
+                // Ask for optional width
+                const widthInput = prompt('Image width (e.g. 400px, 50%, leave blank for original):', '');
+                const widthAttr = widthInput && widthInput.trim() ? ` width="${widthInput.trim()}"` : '';
+                const md = widthAttr
+                  ? `<img src="${b2_ref}" alt="${filename}"${widthAttr}>`
+                  : `![${filename}](${b2_ref})`;
+
                 // Insert at cursor position
                 const start = textarea.selectionStart;
                 const end = textarea.selectionEnd;
@@ -1986,6 +2334,9 @@ async function handleDeleteClick(event) {
   const bulkActions = document.getElementById('ingestBulkActions');
   const acceptAll   = document.getElementById('ingestAcceptAll');
   const rejectAll   = document.getElementById('ingestRejectAll');
+  const pageRange   = document.getElementById('ingestPageRange');
+  const pageFrom    = document.getElementById('ingestPageFrom');
+  const pageTo      = document.getElementById('ingestPageTo');
 
   let currentFile = null;
   let suggestions = []; // [{concept, block_type, content, parent_concept_name, _state}]
@@ -2056,10 +2407,15 @@ async function handleDeleteClick(event) {
       fileInfo.style.display = 'flex';
       dropArea.style.display = 'none';
       status.textContent = '';
+      const isPdf = currentFile.name.match(/\.pdf$/i);
+      if (pageRange) pageRange.style.display = isPdf ? 'block' : 'none';
     } else {
       fileInfo.style.display = 'none';
       dropArea.style.display = '';
       fileInput.value = '';
+      if (pageRange) pageRange.style.display = 'none';
+      if (pageFrom) pageFrom.value = '';
+      if (pageTo) pageTo.value = '';
     }
     updateRunAvailability();
   }
@@ -2083,6 +2439,8 @@ async function handleDeleteClick(event) {
       if (currentFile) formData.append('file', currentFile);
       if (projectSel.value) formData.append('project_id', projectSel.value);
       if (hasInstructions) formData.append('instructions', instructions.value.trim());
+      if (pageFrom && pageFrom.value) formData.append('page_from', pageFrom.value);
+      if (pageTo && pageTo.value) formData.append('page_to', pageTo.value);
 
       const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/ingest`, {
         method: 'POST',

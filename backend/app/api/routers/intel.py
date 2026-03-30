@@ -737,6 +737,8 @@ async def ingest_document(
     file: Optional[UploadFile] = File(None),
     project_id: Optional[int] = Form(None),
     instructions: Optional[str] = Form(None),
+    page_from: Optional[int] = Form(None),
+    page_to: Optional[int] = Form(None),
 ):
     """
     Extract text from a PDF or DOCX, fetch existing concepts for context,
@@ -767,7 +769,10 @@ async def ingest_document(
         try:
             if suffix == ".pdf":
                 with pdfplumber.open(tmp_path) as pdf:
-                    pages = [p.extract_text() or "" for p in pdf.pages]
+                    all_pages = pdf.pages
+                    start = max(0, (page_from or 1) - 1)
+                    end = (page_to or len(all_pages))
+                    pages = [p.extract_text() or "" for p in all_pages[start:end]]
                 text = "\n\n".join(pages)
             elif suffix == ".docx":
                 doc = docxlib.Document(tmp_path)

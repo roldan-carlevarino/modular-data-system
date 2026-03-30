@@ -127,6 +127,21 @@ app.include_router(welfare_router, dependencies=_auth)
 def root():
     return {"status": "ok", "version": "2.0"}
 
+@app.get("/debug/memory")
+def debug_memory():
+    """Returns actual RSS memory of the Python process (no extra deps needed)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS"):
+                    kb = int(line.split()[1])
+                    return {"rss_mb": round(kb / 1024, 1)}
+    except Exception:
+        pass
+    import resource
+    kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return {"rss_mb": round(kb / 1024, 1)}
+
 @app.get("/health")
 def health():
     try:

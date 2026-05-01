@@ -10,6 +10,30 @@ let cachedConcepts = []; // global concept cache for ingest preview
 
 const KNOWLEDGE_API_BASE = "https://api-dashboard-production-fc05.up.railway.app";
 
+// ==================================================================
+// TITLE EXTRACTION
+// First-line markdown H1 (`# Title`) is treated as the block's name.
+// It's persisted in `knowledge_blocks.name` so it can be queried/listed
+// without having to scan content. Fenced code blocks are skipped.
+// ==================================================================
+function extractBlockTitle(content) {
+    if (!content) return null;
+    let inFence = false;
+    const lines = String(content).split('\n');
+    for (const raw of lines) {
+        const line = raw.replace(/\s+$/, '');
+        const stripped = line.replace(/^\s+/, '');
+        if (stripped.startsWith('```')) { inFence = !inFence; continue; }
+        if (inFence) continue;
+        // Match single-hash heading only (not ## or more)
+        if (stripped.startsWith('# ') && !stripped.startsWith('##')) {
+            const t = stripped.slice(2).trim();
+            return t || null;
+        }
+    }
+    return null;
+}
+
 // ── Backblaze B2 signed-URL cache ──────────────────────────────
 const b2Cache = new Map(); // path → { url, expiry }
 
@@ -192,7 +216,8 @@ async function createBlockFromPrompt() {
       content,
       block_type,
       project_id: knowledgeState.project_id || null,
-      mode: knowledgeState.mode || null
+      mode: knowledgeState.mode || null,
+      name: extractBlockTitle(content)
     })
   });
 
@@ -1256,6 +1281,11 @@ async function renderKnowledge(blocks) {
       if (isModifyingContents) {
         headerHtml += `<strong>${block.block_type.toUpperCase()}</strong>`;
       }
+      // Título del bloque (siempre visible si existe). Se rellena del primer `# heading`.
+      const _title = block.name || extractBlockTitle(block.content);
+      if (_title) {
+        headerHtml += ` <span class="block-title">${_title.replace(/</g, '&lt;')}</span>`;
+      }
       // Mostrar etiqueta de modo solo si está en modo modificar y hay modo
       if (isModifyingContents && block.mode) {
         headerHtml += ` <span class="mode-badge">${block.mode}</span>`;
@@ -1389,7 +1419,7 @@ function handleImageResizeClick(e) {
       await fetch(`${KNOWLEDGE_API_BASE}/knowledge/block/${blockId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text, block_type: blockType })
+        body: JSON.stringify({ content: text, block_type: blockType, name: extractBlockTitle(text) })
       });
     } catch (err) {
       console.error('Failed to save image resize:', err);
@@ -1521,7 +1551,7 @@ function addPostItToBlock(blockDiv, noteText, blockId, index) {
         await fetch(`${KNOWLEDGE_API_BASE}/knowledge/block/${blockId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: updatedContent, block_type: blockDiv.dataset.blockType || null })
+          body: JSON.stringify({ content: updatedContent, block_type: blockDiv.dataset.blockType || null, name: extractBlockTitle(updatedContent) })
         });
         if (contentDiv) contentDiv.dataset.originalContent = updatedContent;
         postit.remove();
@@ -1563,7 +1593,7 @@ async function handleEditClick(event) {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ content: newContent, block_type: newType })
+                body: JSON.stringify({ content: newContent, block_type: newType, name: extractBlockTitle(newContent) })
             });
             
             if (!response.ok) throw new Error('Failed to update');
@@ -1573,6 +1603,26 @@ async function handleEditClick(event) {
             if (newType) {
               blockDiv.dataset.blockType = newType;
               blockDiv.className = `knowledge-block ${newType}`;
+            }
+
+            // Sync block-title in header
+            const _newTitle = extractBlockTitle(newContent);
+            const header = blockDiv.querySelector('.block-header');
+            if (header) {
+                let titleEl = header.querySelector('.block-title');
+                if (_newTitle) {
+                    if (!titleEl) {
+                        titleEl = document.createElement('span');
+                        titleEl.className = 'block-title';
+                        // insert after the type strong (first child) if present
+                        const ref = header.querySelector('strong');
+                        if (ref && ref.nextSibling) header.insertBefore(titleEl, ref.nextSibling);
+                        else header.insertBefore(titleEl, header.firstChild);
+                    }
+                    titleEl.textContent = _newTitle;
+                } else if (titleEl) {
+                    titleEl.remove();
+                }
             }
             
             // Renderizar el HTML

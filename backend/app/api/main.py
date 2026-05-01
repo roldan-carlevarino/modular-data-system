@@ -27,6 +27,7 @@ from routers.water import router as water_router
 from routers.weight import router as weight_router
 from routers.menu import router as menu_router
 from routers.welfare import router as welfare_router
+from routers.math_trainer import router as math_trainer_router
 
 
 def _run_migrations():
@@ -122,6 +123,7 @@ app.include_router(water_router, dependencies=_auth)
 app.include_router(weight_router, dependencies=_auth)
 app.include_router(menu_router, dependencies=_auth)
 app.include_router(welfare_router, dependencies=_auth)
+app.include_router(math_trainer_router, dependencies=_auth)
 
 @app.get("/")
 def root():

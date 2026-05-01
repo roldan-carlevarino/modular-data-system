@@ -1,0 +1,413 @@
+/* ==========================================================================
+   MATH TRAINER — tab styles
+   Uses the shared design tokens defined in core/styles/refresh.css
+   (text-primary, bg-secondary, etc).
+   ========================================================================== */
+
+.math-trainer {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 1.25rem 0.5rem 2rem;
+    font-family: 'Inter Tight', sans-serif;
+    color: var(--text-primary);
+}
+
+.math-view { display: block; }
+
+/* ---------- Header ---------- */
+.math-header h2 {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+    letter-spacing: -0.01em;
+}
+.math-sub {
+    margin: 0 0 1.4rem;
+    color: var(--text-tertiary);
+    font-size: 0.85rem;
+}
+
+/* ---------- Setup config ---------- */
+.math-config {
+    display: grid;
+    gap: 1.1rem;
+    margin: 1.2rem 0 1.5rem;
+}
+.math-config__group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.math-config__label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.math-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.math-chip {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.4rem 0.85rem;
+    font: 500 0.78rem/1 'Inter Tight', sans-serif;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.math-chip:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--text-tertiary);
+}
+.math-chip.is-active {
+    background: var(--text-primary);
+    color: var(--bg-secondary);
+    border-color: var(--text-primary);
+}
+
+/* ---------- Buttons ---------- */
+.math-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.6rem;
+}
+.math-btn {
+    font: 500 0.85rem/1 'Inter Tight', sans-serif;
+    padding: 0.65rem 1.1rem;
+    border-radius: var(--radius-sm, 4px);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.math-btn--primary {
+    background: var(--text-primary);
+    color: var(--bg-secondary);
+    border-color: var(--text-primary);
+}
+.math-btn--primary:hover { opacity: 0.88; }
+.math-btn--ghost {
+    background: transparent;
+    color: var(--text-secondary);
+}
+.math-btn--ghost:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.math-hint {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+}
+.math-hint kbd {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 0.05rem 0.32rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.66rem;
+    color: var(--text-secondary);
+}
+
+/* ---------- Stats grid ---------- */
+.math-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.7rem;
+    margin-bottom: 1.4rem;
+}
+.math-stat {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.math-stat--wide { grid-column: span 2; }
+.math-stat--big {
+    padding: 1.2rem 1.3rem;
+}
+.math-stat--big .math-stat__value {
+    font-size: 2.6rem;
+}
+
+.math-stat__label {
+    font-size: 0.66rem;
+    color: var(--text-tertiary);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.math-stat__value {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.4rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.1;
+}
+.math-stat__unit {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+}
+
+.math-trend {
+    color: var(--text-primary);
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: stretch;
+}
+.math-trend__svg { width: 100%; height: 100%; }
+.math-empty {
+    color: var(--text-tertiary);
+    font-style: italic;
+    font-size: 0.8rem;
+}
+
+/* ---------- Per-op breakdown ---------- */
+.math-by-op {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.6rem;
+}
+.math-op-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.math-op-card__head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+}
+.math-op-card__sym {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.4rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.math-op-card__name {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+.math-op-card__metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.85rem;
+    font-size: 0.74rem;
+    color: var(--text-tertiary);
+}
+.math-op-card__metrics strong {
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-right: 0.18rem;
+}
+
+/* ---------- Active session ---------- */
+.math-session-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 0.9rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.6rem;
+}
+.math-timer {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.4rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    min-width: 5ch;
+}
+.math-session-stats {
+    display: flex;
+    gap: 1rem;
+    margin-left: auto;
+}
+.math-session-stat {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+}
+.math-session-stat__label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.62rem;
+    font-weight: 600;
+}
+.math-session-stat__val {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+.math-session-stat__unit {
+    font-size: 0.68rem;
+    color: var(--text-tertiary);
+}
+
+.math-problem {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(2.2rem, 6vw, 3.6rem);
+    text-align: center;
+    color: var(--text-primary);
+    padding: 2.5rem 0.5rem 1.5rem;
+    letter-spacing: 0.02em;
+}
+
+.math-answer-form {
+    display: flex;
+    gap: 0.5rem;
+    max-width: 420px;
+    margin: 0 auto;
+}
+.math-answer-input {
+    flex: 1;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    padding: 0.7rem 0.9rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.1rem;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.math-answer-input:focus {
+    border-color: var(--text-primary);
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05);
+}
+
+.math-feedback {
+    text-align: center;
+    margin-top: 1rem;
+    height: 1.6em;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.1rem;
+    color: var(--text-tertiary);
+    transition: color 0.15s, transform 0.15s;
+}
+.math-feedback.is-ok { color: #2f8a4e; }
+.math-feedback.is-bad { color: #b54545; }
+
+/* ---------- Results view ---------- */
+.math-result-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.7rem;
+    margin: 1rem 0 1.4rem;
+}
+
+/* ---------- Heatmap section ---------- */
+.math-heatmap-section {
+    margin-top: 1.6rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--border-color);
+}
+.math-heatmap-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.math-heatmap-title {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+.math-heatmap-sub {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    margin: 0.25rem 0 0.85rem;
+}
+
+.math-chips--mini .math-chip {
+    padding: 0.28rem 0.62rem;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    min-width: 2rem;
+    text-align: center;
+}
+
+.math-heatmap-grid {
+    display: grid;
+    gap: 2px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.5rem;
+    overflow-x: auto;
+}
+.math-heatmap-axis {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.66rem;
+    color: var(--text-tertiary);
+    min-width: 1.6rem;
+    height: 1.4rem;
+    user-select: none;
+}
+.math-heatmap-axis--row { padding-right: 0.35rem; }
+.math-heatmap-axis--corner { background: transparent; }
+
+.math-heatmap-cell {
+    aspect-ratio: 1 / 1;
+    min-height: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+    cursor: default;
+    transition: transform 0.1s, box-shadow 0.1s;
+    position: relative;
+}
+.math-heatmap-cell:hover {
+    transform: scale(1.08);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    z-index: 2;
+}
+.math-heatmap-cell--empty {
+    background: repeating-linear-gradient(
+        45deg,
+        var(--bg-secondary),
+        var(--bg-secondary) 3px,
+        var(--bg-tertiary) 3px,
+        var(--bg-tertiary) 6px
+    );
+    opacity: 0.45;
+}
+.math-heatmap-cell__n {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.62rem;
+    color: rgba(0, 0, 0, 0.65);
+    font-weight: 600;
+    pointer-events: none;
+}

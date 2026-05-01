@@ -19,6 +19,9 @@
   <link rel="stylesheet" href="intel/intel.css">
   <link rel="stylesheet" href="healthcare/healthcare.css">
   <link rel="stylesheet" href="rss/rss.css">
+  <link rel="stylesheet" href="math/math.css">
+  <!-- Design refresh layer (Notion-like UI + Overleaf-like Intel). Remove this line to roll back. -->
+  <link rel="stylesheet" href="core/styles/refresh.css">
 
   <!-- KaTeX -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
@@ -54,7 +57,12 @@
   <script defer src="healthcare/health-index.js"></script>
   <script defer src="healthcare/healthcare-panels.js"></script>
   <script defer src="intel/intel.js"></script>
+  <script defer src="intel/intel-preview.js"></script>
+  <script defer src="intel/intel-edit-mode.js"></script>
+  <script defer src="intel/intel-resizer.js"></script>
+  <script defer src="intel/intel-add-modal.js"></script>
   <script defer src="rss/rss.js"></script>
+  <script defer src="math/math.js"></script>
 </head>
 
 <body>
@@ -117,6 +125,7 @@
     <input type="radio" name="tab" id="tab8">
     <input type="radio" name="tab" id="tab9">
     <input type="radio" name="tab" id="tab10">
+    <input type="radio" name="tab" id="tab11">
 
     <div class="tab-labels">
       <label for="tab1">Home</label>
@@ -129,6 +138,7 @@
       <label for="tab8">Leisure</label>
       <label for="tab9">Plaza</label>
       <label for="tab10">System</label>
+      <label for="tab11">Math</label>
     </div>
 
     <div class="tab-content">
@@ -295,16 +305,16 @@
             <div id="activePomodoro" class="pomodoro-section" style="display: none;">
               <div class="dual-timer-row">
                 <div id="studyTimerBlock" class="timer-block timer-study timer-active">
-                  <div class="timer-label">&#x1F4DA; Study</div>
+                  <div class="timer-label">Study</div>
                   <div id="studyTimerDisplay" class="timer-display">3:00:00</div>
                 </div>
                 <div id="restTimerBlock" class="timer-block timer-rest timer-paused">
-                  <div class="timer-label">&#x2615; Rest</div>
+                  <div class="timer-label">Rest</div>
                   <div id="restTimerDisplay" class="timer-display">30:00</div>
                 </div>
               </div>
 
-              <button id="switchBtn" class="btn-switch-mode">&#x23F8; Pause study · Start rest &#x2192;</button>
+              <button id="switchBtn" class="btn-switch-mode">Pause study · Start rest &rarr;</button>
 
               <div class="focus-display">
                 <span class="focus-label">Focus: </span>
@@ -326,16 +336,16 @@
             <div class="pomodoro-section">
               <div class="projects-header">
                 <h2>Index Projects</h2>
-                <button id="newProjectBtn" class="kb-btn kb-btn--concept" title="New project">&#xFF0B; New</button>
-                <button id="projectSchemasBtn" class="kb-btn kb-btn--relations" title="Open project schemas">&#x1F9E9; Schemas</button>
+                <button id="newProjectBtn" class="kb-btn kb-btn--concept" title="New project">+ New</button>
+                <button id="projectSchemasBtn" class="kb-btn kb-btn--relations" title="Open project schemas">Schemas</button>
               </div>
 
               <div id="newProjectForm" class="new-project-form" style="display: none;">
                 <input id="newProjectName" type="text" placeholder="Project name" class="new-project-input">
                 <select id="newProjectParent" class="new-project-select"></select>
                 <select id="newProjectType" class="new-project-select">
-                  <option value="project">&#x1F4C1; Project</option>
-                  <option value="task">&#x1F4C4; Task</option>
+                  <option value="project">Project</option>
+                  <option value="task">Task</option>
                 </select>
                 <input id="newProjectDesc" type="text" placeholder="Description (optional)" class="new-project-input">
                 <div class="new-project-actions">
@@ -362,10 +372,10 @@
             <div class="knowledge-sidebar-header">
               <button id="knowledgeToggle" class="knowledge-toggle" title="Collapse sidebar">&#8249;</button>
               <div class="knowledge-sidebar-actions">
-                <button id="addConceptBtn" class="kb-btn kb-btn--concept" title="New Concept or Block">&#xFF0B; Add</button>
-                <button id="ingestBtn" class="kb-btn kb-btn--ingest" title="Ingest document and get suggestions">&#x21A5; Ingest</button>
-                <button id="modifyConceptBtn" class="kb-btn kb-btn--modify" title="Modify block contents">&#x270E; Contents</button>
-                <button id="modifyBlockBtn" class="kb-btn kb-btn--relations" title="Modify block relations">&#x21C4; Relations</button>
+                <button id="addConceptBtn" class="kb-btn kb-btn--concept" title="New Concept or Block">+ Add</button>
+                <button id="ingestBtn" class="kb-btn kb-btn--ingest" title="Ingest document and get suggestions">Ingest</button>
+                <button id="modifyConceptBtn" class="kb-btn kb-btn--modify" title="Show block management options (delete, type labels)">Manage</button>
+                <button id="modifyBlockBtn" class="kb-btn kb-btn--relations" title="Modify block relations">Relations</button>
               </div>
             </div>
 
@@ -403,11 +413,11 @@
         <div class="rss-layout">
           <div class="rss-header">
             <div class="rss-tabs">
-              <button class="rss-tab active" data-cat="global">&#x1F310; Global</button>
-              <button class="rss-tab" data-cat="ml">&#x1F916; ML</button>
-              <button class="rss-tab" data-cat="markets">&#x1F4C8; Markets</button>
-              <button class="rss-tab" data-cat="quant">&#x1F4D0; Quant</button>
-              <button class="rss-tab" data-cat="politics">&#x1F3DB; Politics</button>
+              <button class="rss-tab active" data-cat="global">Global</button>
+              <button class="rss-tab" data-cat="ml">ML</button>
+              <button class="rss-tab" data-cat="markets">Markets</button>
+              <button class="rss-tab" data-cat="quant">Quant</button>
+              <button class="rss-tab" data-cat="politics">Politics</button>
             </div>
             <div class="rss-controls">
               <select id="rssLimitSelect" class="rss-limit-select">
@@ -415,7 +425,7 @@
                 <option value="20" selected>20</option>
                 <option value="50">50</option>
               </select>
-              <button id="rssRefreshBtn" class="rss-refresh-btn" title="Refresh">&#x21BB;</button>
+              <button id="rssRefreshBtn" class="rss-refresh-btn" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.5-7.1L21 8"/><path d="M21 3v5h-5"/></svg></button>
             </div>
           </div>
           <div id="rssFeed" class="rss-feed"></div>
@@ -429,32 +439,32 @@
             <h2>Healthcare</h2>
             <div class="healthcare-buttons">
               <button class="healthcare-btn" data-panel="water">
-                <span class="healthcare-btn-icon">&#x1F4A7;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5C12 2.5 5 10 5 15a7 7 0 0 0 14 0c0-5-7-12.5-7-12.5z"/></svg></span>
                 <span class="healthcare-btn-label">Water</span>
                 <span class="healthcare-btn-value" id="waterBtnValue">--</span>
               </button>
               <button class="healthcare-btn" data-panel="weight">
-                <span class="healthcare-btn-icon">&#x2696;&#xFE0F;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M7 7l-3 8a4 4 0 0 0 8 0L9 7M17 7l-3 8a4 4 0 0 0 8 0L19 7M12 4v16M8 20h8"/></svg></span>
                 <span class="healthcare-btn-label">Weight</span>
                 <span class="healthcare-btn-value" id="weightBtnValue">--</span>
               </button>
               <button class="healthcare-btn" data-panel="gym">
-                <span class="healthcare-btn-icon">&#x1F3CB;&#xFE0F;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v4M5.5 6v12M9 9v6M15 9v6M18.5 6v12M22 10v4M9 12h6"/></svg></span>
                 <span class="healthcare-btn-label">Gym</span>
                 <span class="healthcare-btn-value" id="gymBtnValue">Routines</span>
               </button>
               <button class="healthcare-btn" data-panel="shopping">
-                <span class="healthcare-btn-icon">&#x1F6D2;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.4 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.5L22 8H6"/><circle cx="10" cy="21" r="1.4"/><circle cx="18" cy="21" r="1.4"/></svg></span>
                 <span class="healthcare-btn-label">Shopping</span>
                 <span class="healthcare-btn-value" id="shoppingBtnValue">--</span>
               </button>
               <button class="healthcare-btn" data-panel="menu">
-                <span class="healthcare-btn-icon">&#x1F37D;&#xFE0F;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v7a2 2 0 0 0 2 2v11M8 2v7a2 2 0 0 1-2 2M15 14V4c2.8 0 4.5 1.6 4.5 4.5V14H15zm0 0v8"/></svg></span>
                 <span class="healthcare-btn-label">Menu</span>
                 <span class="healthcare-btn-value" id="menuBtnValue">Today</span>
               </button>
               <button class="healthcare-btn" data-panel="mental">
-                <span class="healthcare-btn-icon">&#x1F9E0;</span>
+                <span class="healthcare-btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5a4 4 0 0 0-4 4v.5a3 3 0 0 0-2 5.6V16a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3v-1.4a3 3 0 0 0-2-5.6v-.5a4 4 0 0 0-4-4z"/><path d="M12 9v10"/></svg></span>
                 <span class="healthcare-btn-label">Mental</span>
                 <span class="healthcare-btn-value" id="mentalBtnValue">--</span>
               </button>
@@ -501,7 +511,251 @@
 
       <!-- ====== TAB 10: SYSTEM ====== -->
       <div class="content c10">
-        <button id="logoutBtn" class="logout-btn">&#x23FB; Logout</button>
+        <section class="cheatsheet box">
+          <header class="cheatsheet-header">
+            <h2>Keyboard shortcuts</h2>
+            <p class="cheatsheet-sub">Quick reference for power-user actions across the dashboard.</p>
+          </header>
+
+          <div class="cheatsheet-grid">
+
+            <article class="cheatsheet-group">
+              <h3>Intel — block editing</h3>
+              <ul class="cheatsheet-list">
+                <li><kbd>Ctrl</kbd>+<kbd>E</kbd><span>Edit the block under the mouse cursor</span></li>
+                <li><kbd>Ctrl</kbd>+<kbd>S</kbd><span>Save the block currently being edited</span></li>
+                <li><kbd>Ctrl</kbd>+<kbd>E</kbd><span>(while editing) Save and exit</span></li>
+                <li><kbd>Esc</kbd><span>Cancel edit and discard changes</span></li>
+                <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd><span>Toggle live preview of the current block</span></li>
+              </ul>
+            </article>
+
+            <article class="cheatsheet-group">
+              <h3>Intel — schemas modal</h3>
+              <ul class="cheatsheet-list">
+                <li><kbd>Ctrl</kbd>+<kbd>S</kbd><span>Force-save the current schema</span></li>
+                <li><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd><span>Indent / outdent selected lines</span></li>
+                <li><kbd>Esc</kbd><span>Close the schemas modal</span></li>
+              </ul>
+            </article>
+
+            <article class="cheatsheet-group">
+              <h3>Projects</h3>
+              <ul class="cheatsheet-list">
+                <li><kbd>Ctrl</kbd>+<kbd>S</kbd><span>Save the project schema being edited</span></li>
+                <li><kbd>Esc</kbd><span>Close the open modal / dialog</span></li>
+              </ul>
+            </article>
+
+            <article class="cheatsheet-group">
+              <h3>Calendar</h3>
+              <ul class="cheatsheet-list">
+                <li><kbd>Enter</kbd><span>Confirm the quick-add input</span></li>
+                <li><kbd>Esc</kbd><span>Cancel the quick-add input</span></li>
+              </ul>
+            </article>
+
+            <article class="cheatsheet-group">
+              <h3>Markdown cheatsheet (blocks)</h3>
+              <ul class="cheatsheet-list cheatsheet-mono">
+                <li><code># H1 / ## H2 / ### H3</code><span>Headings</span></li>
+                <li><code>**bold** · *italic* · `code`</code><span>Inline formatting</span></li>
+                <li><code>- item · 1. item</code><span>Lists</span></li>
+                <li><code>$x^2$  ·  $$\\int_0^1 f(x)\\,dx$$</code><span>Inline / block math (KaTeX)</span></li>
+                <li><code>```mermaid … ```</code><span>Diagram block</span></li>
+                <li><code>```chart … ```</code><span>Plotly chart block (insert template via toolbar)</span></li>
+                <li><code>![alt](b2://path/to/image.png)</code><span>Backblaze image / video / PDF</span></li>
+              </ul>
+            </article>
+
+            <article class="cheatsheet-group">
+              <h3>Block types (Intel)</h3>
+              <ul class="cheatsheet-list cheatsheet-types">
+                <li><span class="type-pill type-definition">definition</span><span>Concept definitions</span></li>
+                <li><span class="type-pill type-intuition">intuition</span><span>Why it matters / mental model</span></li>
+                <li><span class="type-pill type-formula">formula</span><span>Equations and derivations</span></li>
+                <li><span class="type-pill type-example">example</span><span>Worked examples</span></li>
+                <li><span class="type-pill type-proof">proof</span><span>Formal proofs</span></li>
+                <li><span class="type-pill type-theorem">theorem</span><span>Theorems &amp; results</span></li>
+                <li><span class="type-pill type-remark">remark</span><span>Side notes / caveats</span></li>
+                <li><span class="type-pill type-exercise">exercise</span><span>Practice questions</span></li>
+                <li><span class="type-pill type-summary">summary</span><span>End-of-section recap</span></li>
+              </ul>
+            </article>
+
+          </div>
+        </section>
+
+        <section class="system-actions box">
+          <header class="cheatsheet-header">
+            <h2>Account</h2>
+          </header>
+          <button id="logoutBtn" class="logout-btn">Logout</button>
+        </section>
+      </div>
+
+      <!-- ====== TAB 11: MATH TRAINER ====== -->
+      <div class="content c11">
+        <section id="mathTrainer" class="math-trainer">
+          <!-- Setup view -->
+          <div class="math-view math-view--setup" data-view="setup">
+            <header class="math-header">
+              <h2>Math Trainer</h2>
+              <p class="math-sub">Mental arithmetic against the clock. Higher score = more correct answers per minute.</p>
+            </header>
+
+            <div class="math-config">
+              <div class="math-config__group">
+                <label class="math-config__label">Operations</label>
+                <div class="math-chips" data-group="ops">
+                  <button type="button" class="math-chip" data-value="+">+ Addition</button>
+                  <button type="button" class="math-chip" data-value="-">− Subtraction</button>
+                  <button type="button" class="math-chip" data-value="*">× Multiplication</button>
+                  <button type="button" class="math-chip" data-value="/">÷ Division</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Number type</label>
+                <div class="math-chips" data-group="numtype" data-single="true">
+                  <button type="button" class="math-chip" data-value="int">Integers</button>
+                  <button type="button" class="math-chip" data-value="dec">Decimals</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Difficulty range</label>
+                <div class="math-chips" data-group="range" data-single="true">
+                  <button type="button" class="math-chip" data-value="easy">Easy (1–12)</button>
+                  <button type="button" class="math-chip" data-value="medium">Medium (2–25)</button>
+                  <button type="button" class="math-chip" data-value="hard">Hard (10–99)</button>
+                  <button type="button" class="math-chip" data-value="expert">Expert (10–999)</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Duration</label>
+                <div class="math-chips" data-group="duration" data-single="true">
+                  <button type="button" class="math-chip" data-value="60">1 min</button>
+                  <button type="button" class="math-chip" data-value="120">2 min</button>
+                  <button type="button" class="math-chip" data-value="300">5 min</button>
+                  <button type="button" class="math-chip" data-value="600">10 min</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Practice mode</label>
+                <div class="math-chips" data-group="mode" data-single="true">
+                  <button type="button" class="math-chip" data-value="normal">Normal (random)</button>
+                  <button type="button" class="math-chip" data-value="weakness" title="Bias problems toward operations and operand pairs you fail or are slow on">Target weak spots</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="math-actions">
+              <button id="mathStartBtn" class="math-btn math-btn--primary">Start training</button>
+              <span class="math-hint"><kbd>Enter</kbd> on the answer field submits each problem</span>
+            </div>
+
+            <!-- Stats panel -->
+            <div class="math-stats" id="mathStats">
+              <div class="math-stat">
+                <div class="math-stat__label">Highest</div>
+                <div class="math-stat__value" id="statHighest">—</div>
+                <div class="math-stat__unit">/ min</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Sessions</div>
+                <div class="math-stat__value" id="statSessions">—</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Total attempts</div>
+                <div class="math-stat__value" id="statAttempts">—</div>
+              </div>
+              <div class="math-stat math-stat--wide">
+                <div class="math-stat__label">Score trend (last 30)</div>
+                <div class="math-trend" id="statTrend"></div>
+              </div>
+            </div>
+
+            <div class="math-by-op" id="mathByOp"></div>
+
+            <!-- Heatmap -->
+            <div class="math-heatmap-section">
+              <div class="math-heatmap-head">
+                <h3 class="math-heatmap-title">Operand heatmap</h3>
+                <div class="math-chips math-chips--mini" id="heatmapOpChips">
+                  <button type="button" class="math-chip" data-op="+">+</button>
+                  <button type="button" class="math-chip" data-op="-">−</button>
+                  <button type="button" class="math-chip is-active" data-op="*">×</button>
+                  <button type="button" class="math-chip" data-op="/">÷</button>
+                </div>
+              </div>
+              <p class="math-heatmap-sub">Color = accuracy (red ≈ failing, green ≈ solid). Opacity = how often you've seen that pair.</p>
+              <div id="mathHeatmap" class="math-heatmap"></div>
+            </div>
+          </div>
+
+          <!-- Active session view -->
+          <div class="math-view math-view--session" data-view="session" hidden>
+            <div class="math-session-bar">
+              <div class="math-timer" id="mathTimer">--:--</div>
+              <div class="math-session-stats">
+                <span class="math-session-stat"><span class="math-session-stat__label">Correct</span><span class="math-session-stat__val" id="mathCorrectCount">0</span></span>
+                <span class="math-session-stat"><span class="math-session-stat__label">Wrong</span><span class="math-session-stat__val" id="mathWrongCount">0</span></span>
+                <span class="math-session-stat"><span class="math-session-stat__label">Pace</span><span class="math-session-stat__val" id="mathPaceCount">0</span><span class="math-session-stat__unit">/min</span></span>
+              </div>
+              <button id="mathAbortBtn" class="math-btn math-btn--ghost">Stop</button>
+            </div>
+
+            <div class="math-problem" id="mathProblem">—</div>
+
+            <form id="mathAnswerForm" class="math-answer-form" autocomplete="off">
+              <input id="mathAnswerInput" class="math-answer-input" type="text" inputmode="decimal"
+                     autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+              <button type="submit" class="math-btn math-btn--primary">Submit</button>
+            </form>
+
+            <div class="math-feedback" id="mathFeedback" aria-live="polite"></div>
+          </div>
+
+          <!-- Results view -->
+          <div class="math-view math-view--results" data-view="results" hidden>
+            <header class="math-header">
+              <h2>Session complete</h2>
+            </header>
+
+            <div class="math-result-summary">
+              <div class="math-stat math-stat--big">
+                <div class="math-stat__label">Score</div>
+                <div class="math-stat__value" id="resultScore">0</div>
+                <div class="math-stat__unit">/ min</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Correct</div>
+                <div class="math-stat__value" id="resultCorrect">0</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Wrong</div>
+                <div class="math-stat__value" id="resultWrong">0</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Accuracy</div>
+                <div class="math-stat__value" id="resultAccuracy">—</div>
+              </div>
+              <div class="math-stat">
+                <div class="math-stat__label">Avg latency</div>
+                <div class="math-stat__value" id="resultLatency">—</div>
+                <div class="math-stat__unit">ms</div>
+              </div>
+            </div>
+
+            <div class="math-actions">
+              <button id="mathAgainBtn" class="math-btn math-btn--primary">Train again</button>
+              <button id="mathBackBtn" class="math-btn math-btn--ghost">Back to setup</button>
+            </div>
+          </div>
+        </section>
       </div>
 
     </div>
@@ -512,7 +766,7 @@
 <div id="waterPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal">
     <div class="rel-header">
-      <span class="rel-title">&#x1F4A7; Water Intake</span>
+      <span class="rel-title">Water Intake</span>
       <button class="rel-close" data-close="waterPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -534,7 +788,7 @@
 <div id="weightPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal">
     <div class="rel-header">
-      <span class="rel-title">&#x2696;&#xFE0F; Weight</span>
+      <span class="rel-title">Weight</span>
       <button class="rel-close" data-close="weightPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -555,7 +809,7 @@
 <div id="gymPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal healthcare-modal--large">
     <div class="rel-header">
-      <span class="rel-title">&#x1F3CB;&#xFE0F; Gym</span>
+      <span class="rel-title">Gym</span>
       <button class="rel-close" data-close="gymPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -603,7 +857,7 @@
 <div id="shoppingPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal healthcare-modal--large">
     <div class="rel-header">
-      <span class="rel-title">&#x1F6D2; Shopping List</span>
+      <span class="rel-title">Shopping List</span>
       <button class="rel-close" data-close="shoppingPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -621,7 +875,7 @@
 <div id="menuPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal healthcare-modal--large">
     <div class="rel-header">
-      <span class="rel-title">&#x1F37D;&#xFE0F; Menu</span>
+      <span class="rel-title">Menu</span>
       <button class="rel-close" data-close="menuPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -644,7 +898,7 @@
 <div id="mentalPanel" class="rel-overlay" style="display: none;">
   <div class="rel-modal healthcare-modal healthcare-modal--large">
     <div class="rel-header">
-      <span class="rel-title">&#x1F9E0; Mental Health</span>
+      <span class="rel-title">Mental Health</span>
       <button class="rel-close" data-close="mentalPanel">&#x2715;</button>
     </div>
     <div class="healthcare-modal-body">
@@ -656,11 +910,11 @@
       <!-- Log view -->
       <div id="mentalLogView" class="mental-view">
         <div class="mental-section">
-          <label class="mental-label">&#x1F634; Sleep Hours</label>
+          <label class="mental-label">Sleep Hours</label>
           <input type="number" id="sleepHours" class="mental-input mental-input--wide" placeholder="Hours" min="0" max="24" step="0.5">
         </div>
         <div class="mental-section">
-          <label class="mental-label">&#x1F630; Stress Level</label>
+          <label class="mental-label">Stress Level</label>
           <div class="mental-stress-selector" id="stressSelector">
             <button class="stress-btn" data-stress="1" title="Very Low">1</button>
             <button class="stress-btn" data-stress="2" title="Low">2</button>
@@ -670,7 +924,7 @@
           </div>
         </div>
         <div class="mental-section">
-          <label class="mental-label">&#x1F4DD; Journal Note (optional)</label>
+          <label class="mental-label">Journal Note (optional)</label>
           <textarea id="mentalJournalNote" class="mental-textarea" placeholder="How are you feeling today?"></textarea>
         </div>
         <button id="saveMentalBtn" class="btn-primary mental-save-btn">Save Entry</button>
@@ -689,7 +943,7 @@
 <div id="ingestModal" class="rel-overlay" style="display: none;">
   <div class="rel-modal ingest-modal">
     <div class="rel-header">
-      <span class="rel-title">&#x21A5; Document Ingestion</span>
+      <span class="rel-title">Document Ingestion</span>
       <div class="rel-header-controls">
         <button id="ingestCloseBtn" class="rel-close">&#x2715;</button>
       </div>
@@ -697,7 +951,7 @@
     <div class="ingest-body">
       <div class="ingest-upload-panel">
         <div class="ingest-drop-area" id="ingestDropArea">
-          <div class="ingest-drop-icon">&#x1F4C4;</div>
+          <div class="ingest-drop-icon"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 18v-6"/><path d="M9 15l3-3 3 3"/></svg></div>
           <div class="ingest-drop-label">Drop a PDF or DOCX here</div>
           <div class="ingest-drop-sub">or click to browse</div>
           <input type="file" id="ingestFileInput" accept=".pdf,.docx" style="display: none;">
@@ -720,15 +974,15 @@
           <label class="ingest-label" style="margin-top: 0.6rem;">Instructions / query (optional)</label>
           <textarea id="ingestInstructions" class="ingest-instructions" placeholder="e.g. Focus on formal definitions and theorems."></textarea>
         </div>
-        <button id="ingestRunBtn" class="ingest-run-btn" disabled>&#x2728; Analyse &amp; Suggest</button>
+        <button id="ingestRunBtn" class="ingest-run-btn" disabled>Analyse &amp; Suggest</button>
         <div id="ingestStatus" class="ingest-status"></div>
       </div>
       <div class="ingest-suggestions-panel">
         <div class="ingest-suggestions-header">
           <span class="ingest-suggestions-title">Suggestions</span>
           <div class="ingest-suggestions-actions" id="ingestBulkActions" style="display: none;">
-            <button id="ingestAcceptAll" class="ingest-bulk-btn ingest-bulk-accept">&#x2714; Accept all</button>
-            <button id="ingestRejectAll" class="ingest-bulk-btn ingest-bulk-reject">&#x2716; Reject all</button>
+            <button id="ingestAcceptAll" class="ingest-bulk-btn ingest-bulk-accept">Accept all</button>
+            <button id="ingestRejectAll" class="ingest-bulk-btn ingest-bulk-reject">Reject all</button>
           </div>
         </div>
         <div id="ingestSuggestions" class="ingest-suggestions-list">
@@ -743,7 +997,7 @@
 <div id="conceptSchemasModal" class="rel-overlay" style="display: none;">
   <div class="rel-modal schema-modal">
     <div class="rel-header">
-      <span class="rel-title" id="conceptSchemaTitle">&#x1F4D0; Concept Schemas</span>
+      <span class="rel-title" id="conceptSchemaTitle">Concept Schemas</span>
       <div class="rel-header-controls">
         <button id="conceptSchemasCloseBtn" class="rel-close">&#x2715;</button>
       </div>
@@ -754,13 +1008,13 @@
           <select id="conceptSchemaSelect" class="new-project-select" title="Schema"></select>
         </div>
         <div class="project-schema-actions">
-          <button id="conceptSchemaNewBtn" class="kb-btn kb-btn--concept" title="New schema">&#xFF0B; Schema</button>
-          <button id="conceptSchemaRenameBtn" class="kb-btn kb-btn--ghost" title="Rename schema">&#x270E; Rename</button>
-          <button id="conceptSchemaDuplicateBtn" class="kb-btn kb-btn--ghost" title="Duplicate schema">&#x29C9; Duplicate</button>
-          <button id="conceptSchemaTemplateBtn" class="kb-btn kb-btn--ghost" title="Insert template">&#x1F9E9; Template</button>
-          <button id="conceptSchemaDeleteBtn" class="kb-btn kb-btn--ghost" title="Delete schema">&#x1F5D1; Delete</button>
-          <button id="conceptSchemaExportBtn" class="kb-btn kb-btn--ghost" title="Export markdown">&#x21E9; Export MD</button>
-          <button id="conceptSchemaDiagramBtn" class="kb-btn kb-btn--ghost" title="Toggle diagram editor">&#x1F500; Diagram</button>
+          <button id="conceptSchemaNewBtn" class="kb-btn kb-btn--concept" title="New schema">+ Schema</button>
+          <button id="conceptSchemaRenameBtn" class="kb-btn kb-btn--ghost" title="Rename schema">Rename</button>
+          <button id="conceptSchemaDuplicateBtn" class="kb-btn kb-btn--ghost" title="Duplicate schema">Duplicate</button>
+          <button id="conceptSchemaTemplateBtn" class="kb-btn kb-btn--ghost" title="Insert template">Template</button>
+          <button id="conceptSchemaDeleteBtn" class="kb-btn kb-btn--ghost" title="Delete schema">Delete</button>
+          <button id="conceptSchemaExportBtn" class="kb-btn kb-btn--ghost" title="Export markdown">Export MD</button>
+          <button id="conceptSchemaDiagramBtn" class="kb-btn kb-btn--ghost" title="Toggle diagram editor">Diagram</button>
         </div>
         <textarea id="conceptSchemaText" class="project-schema-text" placeholder="Escribe aqu&#xED; tu esquema del concepto (estructura, relaciones, notas, diagramas, etc.)"></textarea>
         <div id="conceptSchemaDiagramContainer" class="schema-diagram-container" style="display:none"></div>
@@ -774,7 +1028,7 @@
 <div id="projectSchemasModal" class="rel-overlay" style="display: none;">
   <div class="rel-modal schema-modal">
     <div class="rel-header">
-      <span class="rel-title">&#x1F9E9; Project Schemas</span>
+      <span class="rel-title">Project Schemas</span>
       <div class="rel-header-controls">
         <button id="projectSchemasCloseBtn" class="rel-close">&#x2715;</button>
       </div>
@@ -786,13 +1040,13 @@
           <select id="projectSchemaSelect" class="new-project-select" title="Schema"></select>
         </div>
         <div class="project-schema-actions">
-          <button id="projectSchemaNewBtn" class="kb-btn kb-btn--concept" title="New schema">&#xFF0B; Schema</button>
-          <button id="projectSchemaRenameBtn" class="kb-btn kb-btn--ghost" title="Rename schema">&#x270E; Rename</button>
-          <button id="projectSchemaDuplicateBtn" class="kb-btn kb-btn--ghost" title="Duplicate schema">&#x29C9; Duplicate</button>
-          <button id="projectSchemaTemplateBtn" class="kb-btn kb-btn--ghost" title="Insert template">&#x1F9E9; Template</button>
-          <button id="projectSchemaDeleteBtn" class="kb-btn kb-btn--ghost" title="Delete schema">&#x1F5D1; Delete</button>
-          <button id="projectSchemaExportBtn" class="kb-btn kb-btn--ghost" title="Export markdown">&#x21E9; Export MD</button>
-          <button id="projectSchemaDiagramBtn" class="kb-btn kb-btn--ghost" title="Toggle diagram editor">&#x1F500; Diagram</button>
+          <button id="projectSchemaNewBtn" class="kb-btn kb-btn--concept" title="New schema">+ Schema</button>
+          <button id="projectSchemaRenameBtn" class="kb-btn kb-btn--ghost" title="Rename schema">Rename</button>
+          <button id="projectSchemaDuplicateBtn" class="kb-btn kb-btn--ghost" title="Duplicate schema">Duplicate</button>
+          <button id="projectSchemaTemplateBtn" class="kb-btn kb-btn--ghost" title="Insert template">Template</button>
+          <button id="projectSchemaDeleteBtn" class="kb-btn kb-btn--ghost" title="Delete schema">Delete</button>
+          <button id="projectSchemaExportBtn" class="kb-btn kb-btn--ghost" title="Export markdown">Export MD</button>
+          <button id="projectSchemaDiagramBtn" class="kb-btn kb-btn--ghost" title="Toggle diagram editor">Diagram</button>
         </div>
         <textarea id="projectSchemaText" class="project-schema-text" placeholder="Escribe aqu&#xED; tu esquema libre del proyecto (arquitectura, m&#xF3;dulos, flujo de datos, riesgos, TODOs, etc.)"></textarea>
         <div id="projectSchemaDiagramContainer" class="schema-diagram-container" style="display:none"></div>
@@ -806,7 +1060,7 @@
 <div id="relationsModal" class="rel-overlay" style="display: none;">
   <div class="rel-modal">
     <div class="rel-header">
-      <span class="rel-title">&#x21C4; Relations Editor</span>
+      <span class="rel-title">Relations Editor</span>
       <div class="rel-header-controls">
         <label class="rel-toggle-label">
           <input type="checkbox" id="relShowBlocksToggle"> Show blocks

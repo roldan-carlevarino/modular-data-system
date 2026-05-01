@@ -7,6 +7,30 @@ from typing import List, Optional
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"]) 
 
+
+def _extract_title(content):
+    """Extract first markdown H1 (`# Title`) from a block's content.
+
+    Skips lines inside fenced code blocks. Returns None if no H1 found.
+    """
+    if not content:
+        return None
+    in_fence = False
+    for raw_line in content.splitlines():
+        line = raw_line.rstrip()
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        stripped = line.lstrip()
+        # Single-hash heading only (avoid matching ##, ###, etc.)
+        if stripped.startswith("# ") and not stripped.startswith("##"):
+            title = stripped[2:].strip()
+            return title or None
+    return None
+
+
 @router.get("/concept/{concept_id}")
 def get_concept(concept_id: int):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
@@ -78,7 +102,8 @@ def knowledge_query(
                 b.mode,
                 b.exercise_id,
                 b.position,
-                b.depends_on_block_id
+                b.depends_on_block_id,
+                b.name
             FROM knowledge_blocks b
             LEFT JOIN knowledge_block_projects bp
                    ON bp.block_id = b.id
@@ -117,7 +142,8 @@ def knowledge_query(
                 "mode": r[3],
                 "exercise_id": r[4],
                 "position": r[5],
-                "depends_on_block_id": r[6]
+                "depends_on_block_id": r[6],
+                "name": r[7]
             }
             for r in rows
         ]
@@ -282,7 +308,9 @@ def update_block_content(block_id: int, payload: dict):
         # Solo validar que venga content
         content = payload.get("content")
         block_type = payload.get("block_type")
-        
+        # name puede venir explícito; si no, se extrae del contenido (primer `# heading`).
+        name = payload.get("name") if "name" in payload else _extract_title(content)
+
         if content is None:
             raise HTTPException(400, "Content is required")
 
@@ -290,15 +318,15 @@ def update_block_content(block_id: int, payload: dict):
         if block_type:
             cur.execute("""
                 UPDATE knowledge_blocks
-                SET content = %s, block_type = %s
+                SET content = %s, block_type = %s, name = %s
                 WHERE id = %s
-            """, (content, block_type, block_id))
+            """, (content, block_type, name, block_id))
         else:
             cur.execute("""
                 UPDATE knowledge_blocks
-                SET content = %s
+                SET content = %s, name = %s
                 WHERE id = %s
-            """, (content, block_id))
+            """, (content, name, block_id))
 
         if cur.rowcount == 0:
             raise HTTPException(404, f"Block {block_id} not found")
@@ -334,16 +362,17 @@ def create_block(payload: dict):
         content = payload.get("content", "")
         mode = payload.get("mode")
         project_id = payload.get("project_id")
+        name = payload.get("name") if "name" in payload else _extract_title(content)
 
         if not concept_id or not block_type:
             raise HTTPException(400, "concept_id and block_type are required")
 
         # Inserta el bloque siempre
         cur.execute("""
-            INSERT INTO knowledge_blocks (concept_id, block_type, content, mode, reviewed)
-            VALUES (%s, %s, %s, %s, TRUE)
+            INSERT INTO knowledge_blocks (concept_id, block_type, content, mode, name, reviewed)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
             RETURNING id
-        """, (concept_id, block_type, content, mode))
+        """, (concept_id, block_type, content, mode, name))
 
         block_id = cur.fetchone()[0]
 

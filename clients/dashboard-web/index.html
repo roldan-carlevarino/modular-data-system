@@ -612,6 +612,10 @@
                   <button type="button" class="math-chip" data-value="-">− Subtraction</button>
                   <button type="button" class="math-chip" data-value="*">× Multiplication</button>
                   <button type="button" class="math-chip" data-value="/">÷ Division</button>
+                  <button type="button" class="math-chip" data-value="%" title="Mix of 'X% of Y' and 'X is what % of Y'">% Percentages</button>
+                  <button type="button" class="math-chip" data-value="f" title="Fraction add/subtract — answer as decimal or a/b">½ Fractions</button>
+                  <button type="button" class="math-chip" data-value="s" title="x² and √x (perfect squares)">x² √ Squares</button>
+                  <button type="button" class="math-chip" data-value="c" title="Decimal ↔ fraction ↔ percent conversions">↔ Conversions</button>
                 </div>
               </div>
 
@@ -648,14 +652,170 @@
                 <div class="math-chips" data-group="mode" data-single="true">
                   <button type="button" class="math-chip" data-value="normal">Normal (random)</button>
                   <button type="button" class="math-chip" data-value="weakness" title="Bias problems toward operations and operand pairs you fail or are slow on">Target weak spots</button>
+                  <button type="button" class="math-chip" data-value="drill" title="Pick the worst pair, repeat it until you get it right 3 times in a row, then move to the next">Drill (master one at a time)</button>
+                </div>
+                <div id="mathWeakPreview" class="math-weak-preview" hidden></div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Tolerance</label>
+                <div class="math-chips" data-group="tolerance" data-single="true">
+                  <button type="button" class="math-chip" data-value="strict" title="Exact answer required">Strict</button>
+                  <button type="button" class="math-chip" data-value="pct5" title="Accept answers within ±5% — trains estimation">±5%</button>
+                  <button type="button" class="math-chip" data-value="pct10" title="Accept answers within ±10% — fast approximation">±10%</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Input mode</label>
+                <div class="math-chips" data-group="input" data-single="true">
+                  <button type="button" class="math-chip" data-value="type" title="Type the answer with the keyboard">Type answer</button>
+                  <button type="button" class="math-chip" data-value="mc" title="Pick from 4 options — great on mobile">Multiple choice</button>
+                </div>
+              </div>
+
+              <div class="math-config__group">
+                <label class="math-config__label">Extras</label>
+                <div class="math-chips" data-group="negatives" data-toggle="true">
+                  <button type="button" class="math-chip" data-value="on" title="Allow subtraction results that go below zero">Allow negatives</button>
                 </div>
               </div>
             </div>
 
             <div class="math-actions">
               <button id="mathStartBtn" class="math-btn math-btn--primary">Start training</button>
-              <span class="math-hint"><kbd>Enter</kbd> on the answer field submits each problem</span>
+              <span class="math-hint"><kbd>Enter</kbd> on the answer field submits each problem · fractions: type <kbd>5/6</kbd> or <kbd>0.83</kbd></span>
             </div>
+
+            <!-- Cheat sheet -->
+            <details class="math-cheat" id="mathCheat">
+              <summary class="math-cheat__summary">Cheat sheet — fractions, %, squares, conversions</summary>
+              <div class="math-cheat__grid">
+                <div class="math-cheat__card">
+                  <h4>Fraction → decimal → %</h4>
+                  <p class="math-cheat__tier">Tier 1 — automatic</p>
+                  <table class="math-cheat__table">
+                    <tr class="is-must"><td>1/2</td><td>0.5</td><td>50%</td></tr>
+                    <tr class="is-must"><td>1/3</td><td>0.333…</td><td>33.3%</td></tr>
+                    <tr class="is-must"><td>2/3</td><td>0.666…</td><td>66.7%</td></tr>
+                    <tr class="is-must"><td>1/4</td><td>0.25</td><td>25%</td></tr>
+                    <tr class="is-must"><td>3/4</td><td>0.75</td><td>75%</td></tr>
+                    <tr class="is-must"><td>1/5</td><td>0.2</td><td>20%</td></tr>
+                    <tr class="is-must"><td>2/5</td><td>0.4</td><td>40%</td></tr>
+                    <tr class="is-must"><td>3/5</td><td>0.6</td><td>60%</td></tr>
+                    <tr class="is-must"><td>4/5</td><td>0.8</td><td>80%</td></tr>
+                    <tr class="is-must"><td>1/10</td><td>0.1</td><td>10%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Tier 2 — fluent</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/6</td><td>0.166…</td><td>16.7%</td></tr>
+                    <tr><td>5/6</td><td>0.833…</td><td>83.3%</td></tr>
+                    <tr><td>1/8</td><td>0.125</td><td>12.5%</td></tr>
+                    <tr><td>3/8</td><td>0.375</td><td>37.5%</td></tr>
+                    <tr><td>5/8</td><td>0.625</td><td>62.5%</td></tr>
+                    <tr><td>7/8</td><td>0.875</td><td>87.5%</td></tr>
+                    <tr><td>1/9</td><td>0.111…</td><td>11.1%</td></tr>
+                    <tr><td>2/9</td><td>0.222…</td><td>22.2%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Tier 3 — bonus</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/7</td><td>0.1428…</td><td>14.3%</td></tr>
+                    <tr><td>2/7</td><td>0.2857…</td><td>28.6%</td></tr>
+                    <tr><td>1/12</td><td>0.083…</td><td>8.3%</td></tr>
+                    <tr><td>1/16</td><td>0.0625</td><td>6.25%</td></tr>
+                    <tr><td>1/20</td><td>0.05</td><td>5%</td></tr>
+                    <tr><td>1/25</td><td>0.04</td><td>4%</td></tr>
+                    <tr><td>1/50</td><td>0.02</td><td>2%</td></tr>
+                    <tr><td>1/100</td><td>0.01</td><td>1%</td></tr>
+                  </table>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Squares (n²)</h4>
+                  <p class="math-cheat__tier">Tier 1 — must know (1–15)</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr class="is-must"><td>1² = 1</td><td>2² = 4</td><td>3² = 9</td></tr>
+                    <tr class="is-must"><td>4² = 16</td><td>5² = 25</td><td>6² = 36</td></tr>
+                    <tr class="is-must"><td>7² = 49</td><td>8² = 64</td><td>9² = 81</td></tr>
+                    <tr class="is-must"><td>10² = 100</td><td>11² = 121</td><td>12² = 144</td></tr>
+                    <tr class="is-must"><td>13² = 169</td><td>14² = 196</td><td>15² = 225</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Tier 2 — standard (16–30)</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>16² = 256</td><td>17² = 289</td><td>18² = 324</td></tr>
+                    <tr><td>19² = 361</td><td>20² = 400</td><td>21² = 441</td></tr>
+                    <tr><td>22² = 484</td><td>23² = 529</td><td>24² = 576</td></tr>
+                    <tr><td>25² = 625</td><td>26² = 676</td><td>27² = 729</td></tr>
+                    <tr><td>28² = 784</td><td>29² = 841</td><td>30² = 900</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Tier 3 — round bonuses</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>35² = 1225</td><td>40² = 1600</td><td>45² = 2025</td></tr>
+                    <tr><td>50² = 2500</td><td>55² = 3025</td><td>60² = 3600</td></tr>
+                    <tr><td>70² = 4900</td><td>75² = 5625</td><td>80² = 6400</td></tr>
+                    <tr><td>90² = 8100</td><td>100² = 10000</td><td>125² = 15625</td></tr>
+                  </table>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Useful roots</h4>
+                  <p class="math-cheat__tier">Tier 1 — the irrational classics</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr class="is-must"><td>√2 ≈ 1.41</td><td>√3 ≈ 1.73</td><td>√5 ≈ 2.24</td></tr>
+                    <tr class="is-must"><td>√7 ≈ 2.65</td><td>√10 ≈ 3.16</td><td>π ≈ 3.14</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Tier 2 — derived</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>√6 ≈ 2.45</td><td>√8 ≈ 2.83</td><td>√50 ≈ 7.07</td></tr>
+                    <tr><td>√200 ≈ 14.1</td><td>√500 ≈ 22.4</td><td>√1000 ≈ 31.6</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Trick: any √(perfect ≤ 400) is automatic if you know squares 1–20.</p>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Mental % tricks</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>10% of X</strong> → move decimal one left (240 → 24)</li>
+                    <li><strong>1% of X</strong> → move decimal two left (240 → 2.4)</li>
+                    <li><strong>5% of X</strong> → 10% then ÷2 (240 → 24 → 12)</li>
+                    <li><strong>15% of X</strong> → 10% + 5% (240 → 24+12 = 36)</li>
+                    <li><strong>20% of X</strong> → ÷5 (240 → 48)</li>
+                    <li><strong>25% of X</strong> → ÷4 (240 → 60)</li>
+                    <li><strong>X% of Y = Y% of X</strong> (8% of 50 = 50% of 8 = 4)</li>
+                    <li><strong>A is what % of B</strong> → A/B × 100</li>
+                    <li><strong>Increase Y by X%</strong> → Y × (1 + X/100)</li>
+                    <li><strong>From P to Q (% change)</strong> → (Q−P)/P × 100</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Multiplication shortcuts</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>×5</strong> → ×10 then ÷2 (84×5 = 840/2 = 420)</li>
+                    <li><strong>×9</strong> → ×10 then −X (37×9 = 370−37 = 333)</li>
+                    <li><strong>×11 (1-9)</strong> → split & sum middle (37×11 → 3_(3+7)_7 = 407)</li>
+                    <li><strong>×25</strong> → ×100 ÷ 4</li>
+                    <li><strong>×50</strong> → ×100 ÷ 2</li>
+                    <li><strong>×99</strong> → ×100 − X</li>
+                    <li><strong>Square ending in 5</strong> → n(n+1) then append 25 (35² = 3·4=12 → 1225)</li>
+                    <li><strong>(a+b)(a−b) = a² − b²</strong> (23×17 = 20² − 3² = 391)</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Probability quick refs</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>Odds → prob</strong>: a:b → a/(a+b)</li>
+                    <li><strong>Prob → odds</strong>: p → p:(1−p)</li>
+                    <li><strong>Independent AND</strong>: P(A)·P(B)</li>
+                    <li><strong>Mutually exclusive OR</strong>: P(A)+P(B)</li>
+                    <li><strong>Complement</strong>: P(not A) = 1 − P(A)</li>
+                    <li><strong>At least one in n trials</strong>: 1 − (1−p)ⁿ</li>
+                    <li><strong>Expected value</strong>: Σ (xᵢ · pᵢ)</li>
+                  </ul>
+                </div>
+              </div>
+            </details>
 
             <!-- Stats panel -->
             <div class="math-stats" id="mathStats">
@@ -694,6 +854,27 @@
               <p class="math-heatmap-sub">Color = accuracy (red ≈ failing, green ≈ solid). Opacity = how often you've seen that pair.</p>
               <div id="mathHeatmap" class="math-heatmap"></div>
             </div>
+
+            <!-- Latency distribution -->
+            <div class="math-heatmap-section">
+              <h3 class="math-heatmap-title">Latency distribution</h3>
+              <p class="math-heatmap-sub">Are you failing because you're slow, or because of the concept? Green = correct, red = wrong.</p>
+              <div id="mathLatency" class="math-latency"></div>
+            </div>
+
+            <!-- Recent mistakes -->
+            <div class="math-heatmap-section">
+              <h3 class="math-heatmap-title">Recent mistakes</h3>
+              <p class="math-heatmap-sub">Last 20 problems you got wrong — review them.</p>
+              <div id="mathMistakes" class="math-mistakes"></div>
+            </div>
+
+            <!-- Sessions list -->
+            <div class="math-heatmap-section">
+              <h3 class="math-heatmap-title">Recent sessions</h3>
+              <p class="math-heatmap-sub">Delete a session to remove its attempts from all stats.</p>
+              <div id="mathSessions" class="math-sessions"></div>
+            </div>
           </div>
 
           <!-- Active session view -->
@@ -708,6 +889,8 @@
               <button id="mathAbortBtn" class="math-btn math-btn--ghost">Stop</button>
             </div>
 
+            <div id="mathDrillBadge" class="math-drill-badge" hidden></div>
+
             <div class="math-problem" id="mathProblem">—</div>
 
             <form id="mathAnswerForm" class="math-answer-form" autocomplete="off">
@@ -715,6 +898,8 @@
                      autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
               <button type="submit" class="math-btn math-btn--primary">Submit</button>
             </form>
+
+            <div id="mathChoices" class="math-choices" hidden></div>
 
             <div class="math-feedback" id="mathFeedback" aria-live="polite"></div>
           </div>
@@ -749,6 +934,8 @@
                 <div class="math-stat__unit">ms</div>
               </div>
             </div>
+
+            <div id="mathMastery" class="math-mastery" hidden></div>
 
             <div class="math-actions">
               <button id="mathAgainBtn" class="math-btn math-btn--primary">Train again</button>

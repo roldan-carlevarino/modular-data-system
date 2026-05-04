@@ -53,7 +53,7 @@
                     <div class="add-modal__context"></div>
                     <div class="add-modal__chips" role="radiogroup" aria-label="Block type"></div>
                     <textarea class="add-modal__textarea" rows="9"
-                        placeholder="Write the block content. First `# heading` becomes the block title."></textarea>
+                        placeholder="Write the block content. First &#96;# heading&#96; becomes the block title."></textarea>
                     <div class="add-modal__hint">
                         <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to save · <kbd>Esc</kbd> to cancel</span>
                         <span class="add-modal__error" hidden></span>

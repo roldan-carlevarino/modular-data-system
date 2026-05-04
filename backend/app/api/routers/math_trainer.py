@@ -292,7 +292,15 @@ def weakness(min_attempts: int = 2, top_k: int = 60):
                 COUNT(*)                                                AS n,
                 SUM(CASE WHEN is_correct THEN 1 ELSE 0 END)::float
                     / NULLIF(COUNT(*), 0)                               AS accuracy,
-                AVG(latency_ms)::int                                    AS avg_latency
+                AVG(latency_ms)::int                                    AS avg_latency,
+                MAX(ts)                                                 AS last_seen,
+                MAX(CASE WHEN is_correct = FALSE THEN ts END)           AS last_wrong_at,
+                COUNT(*) FILTER (
+                    WHERE ts > NOW() - INTERVAL '7 days'
+                )                                                       AS recent_n,
+                SUM(CASE WHEN is_correct = FALSE
+                    AND ts > NOW() - INTERVAL '7 days'
+                    THEN 1 ELSE 0 END)                                  AS recent_wrong
             FROM math_attempt
             WHERE a_value IS NOT NULL AND b_value IS NOT NULL
             GROUP BY op, a_value, b_value
@@ -313,6 +321,10 @@ def weakness(min_attempts: int = 2, top_k: int = 60):
                 "n": r[3],
                 "accuracy": float(r[4]) if r[4] is not None else 0.0,
                 "avg_latency_ms": r[5],
+                "last_seen": r[6].isoformat() if r[6] else None,
+                "last_wrong_at": r[7].isoformat() if r[7] else None,
+                "recent_n": r[8] or 0,
+                "recent_wrong": r[9] or 0,
             }
             for r in cur.fetchall()
         ]
@@ -378,6 +390,76 @@ def heatmap(op: str = "*", lo: int = 1, hi: int = 12):
         raise
     except Exception as e:
         raise HTTPException(500, f"Failed to compute heatmap: {e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.get("/latencies")
+def latencies(limit: int = 2000):
+    """Return latency samples (split by correctness) for histogram rendering."""
+    limit = max(50, min(20000, limit))
+    conn = None
+    cur = None
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        _ensure_tables(cur)
+        cur.execute(
+            """
+            SELECT latency_ms, is_correct
+            FROM math_attempt
+            ORDER BY ts DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        correct, wrong = [], []
+        for r in cur.fetchall():
+            (correct if r[1] else wrong).append(int(r[0]))
+        return {"correct": correct, "wrong": wrong}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load latencies: {e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.get("/mistakes")
+def mistakes(limit: int = 20):
+    """Return the most recent wrong attempts for review."""
+    limit = max(1, min(200, limit))
+    conn = None
+    cur = None
+    try:
+        conn = _conn()
+        cur = conn.cursor()
+        _ensure_tables(cur)
+        cur.execute(
+            """
+            SELECT id, problem, op, user_answer, correct_answer, latency_ms, ts
+            FROM math_attempt
+            WHERE is_correct = FALSE
+            ORDER BY ts DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "problem": r[1],
+                "op": r[2],
+                "user_answer": r[3],
+                "correct_answer": r[4],
+                "latency_ms": r[5],
+                "ts": r[6].isoformat(),
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load mistakes: {e}")
     finally:
         if cur: cur.close()
         if conn: conn.close()

@@ -87,6 +87,7 @@
                 document.querySelectorAll('[data-group="lib-modal-type"] .library__chip').forEach(b => b.classList.remove('is-active'));
                 btn.classList.add('is-active');
                 refreshStatusOptions(btn.dataset.value);
+                toggleDateFields(btn.dataset.value);
             });
         });
 
@@ -170,6 +171,7 @@
                     <span class="library__card-type library__card-type--${it.type}">${typeLabel(it.type)}</span>
                     <span class="library__card-status library__card-status--${it.status}">${it.status}</span>
                     ${it.year ? `<span class="library__card-year">${it.year}</span>` : ''}
+                    ${dueBadge(it)}
                 </div>
                 <h3 class="library__card-title">${escapeHtml(it.title || '(untitled)')}</h3>
                 ${it.authors && it.authors.length
@@ -267,6 +269,9 @@
                 ${item.external_id ? `<div class="library__hint">${escapeHtml(item.external_id)}</div>` : ''}
                 ${item.primary_url
                     ? `<div><a href="${escapeAttr(item.primary_url)}" target="_blank" rel="noopener">Open primary URL ↗</a></div>`
+                    : ''}
+                ${(item.start_date || item.due_date)
+                    ? `<div>${item.start_date ? `Start: <strong>${item.start_date}</strong>` : ''}${item.start_date && item.due_date ? ' · ' : ''}${item.due_date ? `Due: <strong>${item.due_date}</strong> ${dueBadge(item)}` : ''}</div>`
                     : ''}
             </div>
             ${item.summary
@@ -471,16 +476,20 @@
             if (!it) return;
             setActiveChip('lib-modal-type', it.type);
             refreshStatusOptions(it.type, it.status);
+            toggleDateFields(it.type);
             $('libFTitle').value = it.title || '';
             $('libFYear').value = it.year || '';
             $('libFAuthors').value = (it.authors || []).map(a => a.name || a).join(', ');
             $('libFUrl').value = it.primary_url || '';
             $('libFTags').value = (it.tags || []).join(', ');
             $('libFSummary').value = it.summary || '';
+            $('libFStart').value = it.start_date || '';
+            $('libFDue').value = it.due_date || '';
         } else {
             setActiveChip('lib-modal-type', 'paper');
             refreshStatusOptions('paper');
-            ['libFTitle', 'libFYear', 'libFAuthors', 'libFUrl', 'libFTags', 'libFSummary']
+            toggleDateFields('paper');
+            ['libFTitle', 'libFYear', 'libFAuthors', 'libFUrl', 'libFTags', 'libFSummary', 'libFStart', 'libFDue']
                 .forEach(k => $(k).value = '');
         }
         modal.style.display = 'flex';
@@ -492,6 +501,11 @@
         const sel = $('libFStatus');
         sel.innerHTML = (STATUS_OPTIONS[type] || []).map(s =>
             `<option value="${s}" ${s === current ? 'selected' : ''}>${s}</option>`).join('');
+    }
+
+    function toggleDateFields(type) {
+        const el = $('libFDates');
+        if (el) el.style.display = (type === 'competition') ? 'flex' : 'none';
     }
 
     function setActiveChip(group, value) {
@@ -514,6 +528,8 @@
             primary_url: $('libFUrl').value.trim() || null,
             summary: $('libFSummary').value.trim() || null,
             tags: $('libFTags').value.split(',').map(s => s.trim()).filter(Boolean),
+            start_date: (type === 'competition' ? ($('libFStart').value || null) : null),
+            due_date: (type === 'competition' ? ($('libFDue').value || null) : null),
         };
         try {
             if (state.editing) {
@@ -588,6 +604,19 @@
     // ---- Utils ----
     function typeLabel(t) {
         return { paper: 'Paper', book: 'Book', competition: 'Competition' }[t] || t;
+    }
+    function dueBadge(it) {
+        if (!it.due_date) return '';
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const due = new Date(it.due_date + 'T00:00:00');
+        const days = Math.round((due - today) / 86400000);
+        let cls = 'far', label;
+        if (days < 0) { cls = 'over'; label = `${-days}d ago`; }
+        else if (days === 0) { cls = 'soon'; label = 'today'; }
+        else if (days <= 7) { cls = 'soon'; label = `${days}d`; }
+        else if (days <= 30) { cls = 'mid'; label = `${days}d`; }
+        else { label = `${days}d`; }
+        return `<span class="library__card-due library__card-due--${cls}" title="Due ${it.due_date}">⏳ ${label}</span>`;
     }
     function escapeHtml(s) {
         return String(s == null ? '' : s)

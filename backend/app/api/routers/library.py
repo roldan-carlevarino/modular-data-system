@@ -22,6 +22,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from datetime import date, datetime
 from typing import Optional, Tuple
 from xml.etree import ElementTree as ET
 
@@ -60,6 +61,8 @@ def _row_to_item(row, tags=None, collections=None, links=None, notes_count=0, hi
         "file_path": row["file_path"],
         "summary": row["summary"],
         "metadata": row["metadata"] or {},
+        "start_date": row["start_date"].isoformat() if row.get("start_date") else None,
+        "due_date": row["due_date"].isoformat() if row.get("due_date") else None,
         "added_at": row["added_at"].isoformat() if row["added_at"] else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         "tags": tags or [],
@@ -77,6 +80,18 @@ def _safe_filename(name: str) -> str:
     return name or "file"
 
 
+def _parse_date(val, field: str) -> Optional[date]:
+    """Accept None, '' (clears), 'YYYY-MM-DD' or ISO datetime."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    try:
+        return datetime.strptime(str(val)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, f"{field} must be YYYY-MM-DD")
+
+
 # ---------- Items: list / create / read / update / delete ----------
 
 @router.get("/items")
@@ -86,6 +101,9 @@ def list_items(
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     collection_id: Optional[int] = Query(None),
+    due_before: Optional[str] = Query(None),
+    due_after: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None, description="updated|added|due|due_asc|due_desc|title"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -116,8 +134,26 @@ def list_items(
     if collection_id is not None:
         where.append("EXISTS (SELECT 1 FROM lib_item_collection ic WHERE ic.item_id = i.id AND ic.collection_id = %s)")
         params.append(collection_id)
+    if due_before:
+        d = _parse_date(due_before, "due_before")
+        where.append("i.due_date IS NOT NULL AND i.due_date <= %s")
+        params.append(d)
+    if due_after:
+        d = _parse_date(due_after, "due_after")
+        where.append("i.due_date IS NOT NULL AND i.due_date >= %s")
+        params.append(d)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    order_sql = "ORDER BY i.updated_at DESC"
+    if sort in ("due", "due_asc"):
+        order_sql = "ORDER BY i.due_date ASC NULLS LAST, i.updated_at DESC"
+    elif sort == "due_desc":
+        order_sql = "ORDER BY i.due_date DESC NULLS LAST, i.updated_at DESC"
+    elif sort == "added":
+        order_sql = "ORDER BY i.added_at DESC"
+    elif sort == "title":
+        order_sql = "ORDER BY i.title ASC"
 
     sql = f"""
         SELECT
@@ -138,7 +174,7 @@ def list_items(
             (SELECT COUNT(*) FROM lib_highlight h WHERE h.item_id = i.id) AS highlights_count
         FROM lib_item i
         {where_sql}
-        ORDER BY i.updated_at DESC
+        {order_sql}
         LIMIT %s OFFSET %s
     """
     params.extend([limit, offset])
@@ -185,20 +221,23 @@ def create_item(payload: dict):
     tags = payload.get("tags") or []
     collection_ids = payload.get("collection_ids") or []
     links = payload.get("links") or []
+    start_date = _parse_date(payload.get("start_date"), "start_date")
+    due_date = _parse_date(payload.get("due_date"), "due_date")
 
     conn = _conn()
     cur = conn.cursor()
     try:
         cur.execute("""
             INSERT INTO lib_item (type, title, year, status, authors, external_id,
-                                  primary_url, file_path, summary, metadata)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb)
+                                  primary_url, file_path, summary, metadata,
+                                  start_date, due_date)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb, %s, %s)
             RETURNING id
         """, (
             item_type, title, year, status, json.dumps(authors),
             payload.get("external_id"), payload.get("primary_url"),
             payload.get("file_path"), payload.get("summary"),
-            json.dumps(metadata),
+            json.dumps(metadata), start_date, due_date,
         ))
         new_id = cur.fetchone()[0]
 
@@ -284,6 +323,10 @@ def update_item(item_id: int, payload: dict):
                     raise HTTPException(400, "year must be an integer")
             fields.append(f"{key} = %s")
             params.append(val)
+    for key in ("start_date", "due_date"):
+        if key in payload:
+            fields.append(f"{key} = %s")
+            params.append(_parse_date(payload[key], key))
     if "type" in payload:
         if payload["type"] not in VALID_TYPES:
             raise HTTPException(400, f"type must be one of {sorted(VALID_TYPES)}")

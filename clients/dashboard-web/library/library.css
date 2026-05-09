@@ -301,6 +301,17 @@
     color: var(--text-tertiary);
     margin-left: auto;
 }
+.library__card-due {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.68rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-sm, 4px);
+    border: 1px solid var(--border-color);
+}
+.library__card-due--over { color: #b54545; border-color: rgba(181, 69, 69, 0.5); }
+.library__card-due--soon { color: #c08938; border-color: rgba(192, 137, 56, 0.5); }
+.library__card-due--mid  { color: var(--text-secondary); }
+.library__card-due--far  { color: var(--text-tertiary); }
 .library__card-title {
     margin: 0 0 0.2rem;
     font-family: 'Source Serif 4', serif;

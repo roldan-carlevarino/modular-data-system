@@ -69,10 +69,15 @@ def _run_migrations():
                 file_path TEXT,
                 summary TEXT,
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                start_date DATE,
+                due_date DATE,
                 added_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        # Add date columns idempotently for older deployments
+        cur.execute("ALTER TABLE lib_item ADD COLUMN IF NOT EXISTS start_date DATE")
+        cur.execute("ALTER TABLE lib_item ADD COLUMN IF NOT EXISTS due_date   DATE")
         cur.execute("""
             CREATE INDEX IF NOT EXISTS lib_item_type_idx ON lib_item(type);
         """)
@@ -81,6 +86,10 @@ def _run_migrations():
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS lib_item_added_idx ON lib_item(added_at DESC);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_item_due_idx ON lib_item(due_date)
+            WHERE due_date IS NOT NULL;
         """)
         # Full-text search index over title/summary/authors
         cur.execute("""

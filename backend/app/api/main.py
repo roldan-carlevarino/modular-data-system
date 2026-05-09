@@ -28,6 +28,7 @@ from routers.weight import router as weight_router
 from routers.menu import router as menu_router
 from routers.welfare import router as welfare_router
 from routers.math_trainer import router as math_trainer_router
+from routers.library import router as library_router
 
 
 def _run_migrations():
@@ -52,6 +53,109 @@ def _run_migrations():
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
+        """)
+
+        # ---- Library (mini-Zotero): papers, books, competitions ----
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_item (
+                id SERIAL PRIMARY KEY,
+                type TEXT NOT NULL CHECK (type IN ('paper', 'book', 'competition')),
+                title TEXT NOT NULL,
+                year INTEGER,
+                status TEXT NOT NULL DEFAULT 'wishlist',
+                authors JSONB NOT NULL DEFAULT '[]'::jsonb,
+                external_id TEXT,
+                primary_url TEXT,
+                file_path TEXT,
+                summary TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                added_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_item_type_idx ON lib_item(type);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_item_status_idx ON lib_item(status);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_item_added_idx ON lib_item(added_at DESC);
+        """)
+        # Full-text search index over title/summary/authors
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_item_fts_idx ON lib_item
+            USING GIN (to_tsvector('english',
+                coalesce(title, '') || ' ' ||
+                coalesce(summary, '') || ' ' ||
+                coalesce(authors::text, '')
+            ));
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_link (
+                id SERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
+                label TEXT NOT NULL,
+                url TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'main',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_link_item_idx ON lib_link(item_id, sort_order);
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_collection (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id INTEGER REFERENCES lib_collection(id) ON DELETE SET NULL,
+                color TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_item_collection (
+                item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
+                collection_id INTEGER NOT NULL REFERENCES lib_collection(id) ON DELETE CASCADE,
+                PRIMARY KEY (item_id, collection_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_note (
+                id SERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
+                body_md TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_note_item_idx ON lib_note(item_id, updated_at DESC);
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_highlight (
+                id SERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
+                locator TEXT,
+                quote TEXT NOT NULL,
+                comment TEXT,
+                color TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_highlight_item_idx ON lib_highlight(item_id);
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS lib_tag (
+                item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
+                tag TEXT NOT NULL,
+                PRIMARY KEY (item_id, tag)
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS lib_tag_tag_idx ON lib_tag(tag);
         """)
         conn.commit()
         cur.close()
@@ -124,6 +228,7 @@ app.include_router(weight_router, dependencies=_auth)
 app.include_router(menu_router, dependencies=_auth)
 app.include_router(welfare_router, dependencies=_auth)
 app.include_router(math_trainer_router, dependencies=_auth)
+app.include_router(library_router, dependencies=_auth)
 
 @app.get("/")
 def root():

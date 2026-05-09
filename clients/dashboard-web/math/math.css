@@ -287,6 +287,7 @@
     max-width: 420px;
     margin: 0 auto;
 }
+.math-answer-form[hidden] { display: none; }
 .math-answer-input {
     flex: 1;
     background: var(--bg-primary);
@@ -425,6 +426,7 @@
     max-width: 420px;
     margin: 0 auto;
 }
+.math-choices[hidden] { display: none; }
 .math-choice {
     background: var(--bg-secondary);
     color: var(--text-primary);
@@ -876,4 +878,24 @@
 }
 .math-cheat__table tr.is-must td {
     background: linear-gradient(to right, transparent, transparent);
+}
+
+/* ---------- Cheat sheet trick callout ---------- */
+.math-cheat__trick {
+    margin: 0.5rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: var(--bg-secondary);
+    border-left: 3px solid var(--accent-primary);
+    border-radius: var(--radius-sm, 4px);
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.math-cheat__trick strong { color: var(--text-primary); }
+.math-cheat__trick code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: var(--accent-primary);
+    background: transparent;
+    padding: 0 0.1rem;
+    font-weight: 600;
 }

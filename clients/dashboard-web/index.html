@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="healthcare/healthcare.css">
   <link rel="stylesheet" href="rss/rss.css">
   <link rel="stylesheet" href="math/math.css">
+  <link rel="stylesheet" href="library/library.css">
   <!-- Design refresh layer (Notion-like UI + Overleaf-like Intel). Remove this line to roll back. -->
   <link rel="stylesheet" href="core/styles/refresh.css">
 
@@ -63,6 +64,7 @@
   <script defer src="intel/intel-add-modal.js"></script>
   <script defer src="rss/rss.js"></script>
   <script defer src="math/math.js"></script>
+  <script defer src="library/library.js"></script>
 </head>
 
 <body>
@@ -126,6 +128,7 @@
     <input type="radio" name="tab" id="tab9">
     <input type="radio" name="tab" id="tab10">
     <input type="radio" name="tab" id="tab11">
+    <input type="radio" name="tab" id="tab12">
 
     <div class="tab-labels">
       <label for="tab1">Home</label>
@@ -139,6 +142,7 @@
       <label for="tab9">Plaza</label>
       <label for="tab10">System</label>
       <label for="tab11">Math</label>
+      <label for="tab12">Library</label>
     </div>
 
     <div class="tab-content">
@@ -612,10 +616,12 @@
                   <button type="button" class="math-chip" data-value="-">− Subtraction</button>
                   <button type="button" class="math-chip" data-value="*">× Multiplication</button>
                   <button type="button" class="math-chip" data-value="/">÷ Division</button>
-                  <button type="button" class="math-chip" data-value="%" title="Mix of 'X% of Y' and 'X is what % of Y'">% Percentages</button>
+                  <button type="button" class="math-chip" data-value="%" title="Mix of 'X% of Y' and 'X is what % of Y' — includes sub-1% values">% Percentages</button>
                   <button type="button" class="math-chip" data-value="f" title="Fraction add/subtract — answer as decimal or a/b">½ Fractions</button>
                   <button type="button" class="math-chip" data-value="s" title="x² and √x (perfect squares)">x² √ Squares</button>
                   <button type="button" class="math-chip" data-value="c" title="Decimal ↔ fraction ↔ percent conversions">↔ Conversions</button>
+                  <button type="button" class="math-chip" data-value="^" title="Compare powers — which is the largest? Best in MC mode.">aᵇ Compare powers</button>
+                  <button type="button" class="math-chip" data-value="e" title="Solve for the missing value: a × ? = c, a / ? = c, a × b = c × ?">= Solve for ?</button>
                 </div>
               </div>
 
@@ -731,6 +737,77 @@
                 </div>
 
                 <div class="math-cheat__card">
+                  <h4>All fractions /2 → /9 in order</h4>
+                  <p class="math-cheat__tier">Halves</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/2</td><td>0.5</td><td>50%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Thirds</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/3</td><td>0.333…</td><td>33.3%</td></tr>
+                    <tr><td>2/3</td><td>0.666…</td><td>66.7%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Quarters</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/4</td><td>0.25</td><td>25%</td></tr>
+                    <tr><td>2/4</td><td>0.5</td><td>50%</td></tr>
+                    <tr><td>3/4</td><td>0.75</td><td>75%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Fifths</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/5</td><td>0.2</td><td>20%</td></tr>
+                    <tr><td>2/5</td><td>0.4</td><td>40%</td></tr>
+                    <tr><td>3/5</td><td>0.6</td><td>60%</td></tr>
+                    <tr><td>4/5</td><td>0.8</td><td>80%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Sixths</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/6</td><td>0.1666…</td><td>16.7%</td></tr>
+                    <tr><td>2/6</td><td>0.333…</td><td>33.3%</td></tr>
+                    <tr><td>3/6</td><td>0.5</td><td>50%</td></tr>
+                    <tr><td>4/6</td><td>0.666…</td><td>66.7%</td></tr>
+                    <tr><td>5/6</td><td>0.8333…</td><td>83.3%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Sevenths</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/7</td><td>0.1428…</td><td>14.3%</td></tr>
+                    <tr><td>2/7</td><td>0.2857…</td><td>28.6%</td></tr>
+                    <tr><td>3/7</td><td>0.4285…</td><td>42.9%</td></tr>
+                    <tr><td>4/7</td><td>0.5714…</td><td>57.1%</td></tr>
+                    <tr><td>5/7</td><td>0.7142…</td><td>71.4%</td></tr>
+                    <tr><td>6/7</td><td>0.8571…</td><td>85.7%</td></tr>
+                  </table>
+                  <p class="math-cheat__trick">
+                    <strong>Trick:</strong> all sevenths cycle through <code>142857</code>.
+                    Memorize the order <code>1·4·2·8·5·7</code> and rotate the start
+                    by ranking n/7 from smallest to largest:
+                    1/7→<code>1</code>42857, 2/7→<code>2</code>85714, 3/7→<code>4</code>28571,
+                    4/7→<code>5</code>71428, 5/7→<code>7</code>14285, 6/7→<code>8</code>57142.
+                  </p>
+                  <p class="math-cheat__tier">Eighths</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/8</td><td>0.125</td><td>12.5%</td></tr>
+                    <tr><td>2/8</td><td>0.25</td><td>25%</td></tr>
+                    <tr><td>3/8</td><td>0.375</td><td>37.5%</td></tr>
+                    <tr><td>4/8</td><td>0.5</td><td>50%</td></tr>
+                    <tr><td>5/8</td><td>0.625</td><td>62.5%</td></tr>
+                    <tr><td>6/8</td><td>0.75</td><td>75%</td></tr>
+                    <tr><td>7/8</td><td>0.875</td><td>87.5%</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Ninths</p>
+                  <table class="math-cheat__table">
+                    <tr><td>1/9</td><td>0.111…</td><td>11.1%</td></tr>
+                    <tr><td>2/9</td><td>0.222…</td><td>22.2%</td></tr>
+                    <tr><td>3/9</td><td>0.333…</td><td>33.3%</td></tr>
+                    <tr><td>4/9</td><td>0.444…</td><td>44.4%</td></tr>
+                    <tr><td>5/9</td><td>0.555…</td><td>55.6%</td></tr>
+                    <tr><td>6/9</td><td>0.666…</td><td>66.7%</td></tr>
+                    <tr><td>7/9</td><td>0.777…</td><td>77.8%</td></tr>
+                    <tr><td>8/9</td><td>0.888…</td><td>88.9%</td></tr>
+                  </table>
+                </div>
+
+                <div class="math-cheat__card">
                   <h4>Squares (n²)</h4>
                   <p class="math-cheat__tier">Tier 1 — must know (1–15)</p>
                   <table class="math-cheat__table math-cheat__table--cols3">
@@ -812,6 +889,142 @@
                     <li><strong>Complement</strong>: P(not A) = 1 − P(A)</li>
                     <li><strong>At least one in n trials</strong>: 1 − (1−p)ⁿ</li>
                     <li><strong>Expected value</strong>: Σ (xᵢ · pᵢ)</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Powers of 2 &amp; cubes</h4>
+                  <p class="math-cheat__tier">Powers of 2 (binary / tech)</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>2⁴ = 16</td><td>2⁵ = 32</td><td>2⁶ = 64</td></tr>
+                    <tr><td>2⁷ = 128</td><td>2⁸ = 256</td><td>2⁹ = 512</td></tr>
+                    <tr><td>2¹⁰ ≈ 1k</td><td>2¹⁶ ≈ 65k</td><td>2²⁰ ≈ 1M</td></tr>
+                    <tr><td>2³⁰ ≈ 1B</td><td>2⁴⁰ ≈ 1T</td><td></td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Cubes (n³)</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>2³ = 8</td><td>3³ = 27</td><td>4³ = 64</td></tr>
+                    <tr><td>5³ = 125</td><td>6³ = 216</td><td>7³ = 343</td></tr>
+                    <tr><td>8³ = 512</td><td>9³ = 729</td><td>10³ = 1000</td></tr>
+                  </table>
+                  <p class="math-cheat__trick">
+                    <strong>Trick:</strong> <code>2¹⁰ ≈ 10³</code> — every 10 powers of 2 ≈ 3 zeros.
+                    So <code>2²⁰ ≈ 10⁶</code>, <code>2³⁰ ≈ 10⁹</code>.
+                  </p>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Divisibility tests</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>÷2</strong> → last digit even</li>
+                    <li><strong>÷3</strong> → digit sum ÷ 3 (e.g. 471 → 4+7+1=12 ✓)</li>
+                    <li><strong>÷4</strong> → last two digits ÷ 4 (1316 → 16 ✓)</li>
+                    <li><strong>÷5</strong> → last digit 0 or 5</li>
+                    <li><strong>÷6</strong> → ÷2 AND ÷3</li>
+                    <li><strong>÷8</strong> → last three digits ÷ 8</li>
+                    <li><strong>÷9</strong> → digit sum ÷ 9</li>
+                    <li><strong>÷11</strong> → alternating digit sum ÷ 11 (2728 → 2−7+2−8=−11 ✓)</li>
+                    <li><strong>÷12</strong> → ÷3 AND ÷4</li>
+                    <li><strong>÷25</strong> → last two digits in {00, 25, 50, 75}</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Finance &amp; growth</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>Rule of 72</strong>: doubling time ≈ 72 / r% (8% → 9 yrs)</li>
+                    <li><strong>Rule of 114</strong>: tripling time ≈ 114 / r%</li>
+                    <li><strong>Compounding</strong>: (1+r)ⁿ ≈ 1 + n·r for small r·n</li>
+                    <li><strong>Tip 15%</strong> → 10% + half of it</li>
+                    <li><strong>Tip 18%</strong> → 20% − 10% of 20%</li>
+                    <li><strong>Tip 20%</strong> → ÷5</li>
+                    <li><strong>Discount 30% off</strong> → pay 70% (×0.7)</li>
+                    <li><strong>Markup vs margin</strong>: margin = mkup / (1+mkup)</li>
+                    <li><strong>e ≈ 2.718</strong> · <strong>ln(2) ≈ 0.693</strong> · <strong>ln(10) ≈ 2.303</strong></li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Logs base 10</h4>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>log 2 ≈ 0.301</td><td>log 3 ≈ 0.477</td><td>log 5 ≈ 0.699</td></tr>
+                    <tr><td>log 7 ≈ 0.845</td><td>log e ≈ 0.434</td><td>log π ≈ 0.497</td></tr>
+                    <tr><td>log 10 = 1</td><td>log 100 = 2</td><td>log 1000 = 3</td></tr>
+                  </table>
+                  <p class="math-cheat__trick">
+                    <strong>Trick:</strong> log(a·b) = log a + log b.
+                    log 6 = log 2 + log 3 ≈ 0.778 ·
+                    log 12 = log 3 + log 4 ≈ 0.477 + 0.602 = 1.079.
+                  </p>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Trig essentials</h4>
+                  <p class="math-cheat__tier">sin / cos at standard angles</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>0°</td><td>sin 0</td><td>cos 1</td></tr>
+                    <tr><td>30°</td><td>sin 1/2</td><td>cos √3/2</td></tr>
+                    <tr><td>45°</td><td>sin √2/2</td><td>cos √2/2</td></tr>
+                    <tr><td>60°</td><td>sin √3/2</td><td>cos 1/2</td></tr>
+                    <tr><td>90°</td><td>sin 1</td><td>cos 0</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Pythagorean triples</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>3-4-5</td><td>5-12-13</td><td>8-15-17</td></tr>
+                    <tr><td>7-24-25</td><td>9-40-41</td><td>20-21-29</td></tr>
+                  </table>
+                  <p class="math-cheat__trick">
+                    <strong>Trick:</strong> sin² + cos² = 1.
+                    Sine grows <code>0 → 1/2 → √2/2 → √3/2 → 1</code> as angle goes
+                    <code>0° → 30° → 45° → 60° → 90°</code> (count <code>√n/2</code>).
+                  </p>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Unit conversions</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>1 in</strong> = 2.54 cm · <strong>1 ft</strong> = 30.48 cm</li>
+                    <li><strong>1 mi</strong> ≈ 1.609 km · <strong>1 km</strong> ≈ 0.621 mi</li>
+                    <li><strong>1 kg</strong> ≈ 2.205 lb · <strong>1 lb</strong> ≈ 0.454 kg</li>
+                    <li><strong>1 L</strong> ≈ 0.264 gal · <strong>1 gal</strong> ≈ 3.785 L</li>
+                    <li><strong>°F → °C</strong>: (F − 32) × 5/9</li>
+                    <li><strong>°C → °F</strong>: C × 9/5 + 32 (or ×1.8 + 32)</li>
+                    <li><strong>1 m/s</strong> = 3.6 km/h</li>
+                    <li><strong>1 year</strong> ≈ 365.25 days ≈ 8 766 h ≈ 31.5M s</li>
+                    <li><strong>1 acre</strong> ≈ 4047 m² ≈ ¾ of a football field</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Algebra identities</h4>
+                  <ul class="math-cheat__list">
+                    <li><strong>(a+b)²</strong> = a² + 2ab + b²</li>
+                    <li><strong>(a−b)²</strong> = a² − 2ab + b²</li>
+                    <li><strong>a² − b²</strong> = (a+b)(a−b)</li>
+                    <li><strong>a³ + b³</strong> = (a+b)(a² − ab + b²)</li>
+                    <li><strong>a³ − b³</strong> = (a−b)(a² + ab + b²)</li>
+                    <li><strong>(a+b)³</strong> = a³ + 3a²b + 3ab² + b³</li>
+                    <li><strong>Quadratic</strong>: x = (−b ± √(b²−4ac)) / 2a</li>
+                    <li><strong>Sum 1..n</strong> = n(n+1)/2</li>
+                    <li><strong>Sum 1²..n²</strong> = n(n+1)(2n+1)/6</li>
+                    <li><strong>Geometric sum</strong> = a · (1−rⁿ)/(1−r)</li>
+                  </ul>
+                </div>
+
+                <div class="math-cheat__card">
+                  <h4>Combinatorics &amp; factorials</h4>
+                  <p class="math-cheat__tier">n!</p>
+                  <table class="math-cheat__table math-cheat__table--cols3">
+                    <tr><td>3! = 6</td><td>4! = 24</td><td>5! = 120</td></tr>
+                    <tr><td>6! = 720</td><td>7! = 5040</td><td>8! = 40320</td></tr>
+                  </table>
+                  <p class="math-cheat__tier">Formulas</p>
+                  <ul class="math-cheat__list">
+                    <li><strong>Permutations</strong> P(n,k) = n! / (n−k)!</li>
+                    <li><strong>Combinations</strong> C(n,k) = n! / (k!(n−k)!)</li>
+                    <li><strong>C(n,2)</strong> = n(n−1)/2 (pairs / handshakes)</li>
+                    <li><strong>C(n,k) = C(n, n−k)</strong> (symmetry)</li>
+                    <li><strong>Binomial</strong>: (a+b)ⁿ = Σ C(n,k)·aⁿ⁻ᵏbᵏ</li>
                   </ul>
                 </div>
               </div>
@@ -943,6 +1156,149 @@
             </div>
           </div>
         </section>
+      </div>
+
+      <!-- ====== TAB 12: LIBRARY ====== -->
+      <div class="content c12">
+        <section id="library" class="library">
+          <header class="library__header">
+            <div class="library__title-block">
+              <h2 class="library__title">Library</h2>
+              <p class="library__subtitle">Papers · Books · Competitions</p>
+            </div>
+            <div class="library__header-actions">
+              <input type="search" id="libSearch" class="library__search" placeholder="Search title, author, abstract…">
+              <button id="libImportBtn" class="library__btn library__btn--ghost" title="Import by DOI / arXiv / ISBN">Import</button>
+              <button id="libNewBtn" class="library__btn library__btn--primary">New item</button>
+            </div>
+          </header>
+
+          <div class="library__filters">
+            <div class="library__chips" data-group="lib-type">
+              <button type="button" class="library__chip is-active" data-value="">All</button>
+              <button type="button" class="library__chip" data-value="paper">Papers</button>
+              <button type="button" class="library__chip" data-value="book">Books</button>
+              <button type="button" class="library__chip" data-value="competition">Competitions</button>
+            </div>
+            <div class="library__chips" data-group="lib-status">
+              <button type="button" class="library__chip is-active" data-value="">Any status</button>
+              <button type="button" class="library__chip" data-value="wishlist">Wishlist</button>
+              <button type="button" class="library__chip" data-value="reading">Reading</button>
+              <button type="button" class="library__chip" data-value="upcoming">Upcoming</button>
+              <button type="button" class="library__chip" data-value="active">Active</button>
+              <button type="button" class="library__chip" data-value="submitted">Submitted</button>
+              <button type="button" class="library__chip" data-value="done">Done</button>
+              <button type="button" class="library__chip" data-value="archived">Archived</button>
+              <button type="button" class="library__chip" data-value="abandoned">Abandoned</button>
+            </div>
+          </div>
+
+          <div class="library__layout">
+            <aside class="library__sidebar">
+              <div class="library__panel">
+                <div class="library__panel-head">
+                  <h4>Collections</h4>
+                  <button id="libNewCollectionBtn" class="library__icon-btn" title="New collection">+</button>
+                </div>
+                <ul id="libCollectionList" class="library__col-list"></ul>
+              </div>
+              <div class="library__panel">
+                <div class="library__panel-head"><h4>Tags</h4></div>
+                <div id="libTagCloud" class="library__tag-cloud"></div>
+              </div>
+              <div class="library__panel">
+                <div class="library__panel-head"><h4>Stats</h4></div>
+                <div id="libStats" class="library__stats">—</div>
+              </div>
+            </aside>
+
+            <div class="library__main">
+              <div id="libList" class="library__list"></div>
+              <div id="libEmpty" class="library__empty" style="display:none">
+                No items yet. Click <strong>New item</strong> or <strong>Import</strong> by DOI/arXiv/ISBN.
+              </div>
+            </div>
+
+            <aside class="library__detail" id="libDetail">
+              <div class="library__detail-empty">Select an item to see details.</div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- Item editor modal -->
+        <div id="libModal" class="library__modal" style="display:none">
+          <div class="library__modal-card">
+            <header class="library__modal-head">
+              <h3 id="libModalTitle">New item</h3>
+              <button id="libModalClose" class="library__icon-btn">×</button>
+            </header>
+            <div class="library__modal-body">
+              <div class="library__field">
+                <label>Type</label>
+                <div class="library__chips" data-group="lib-modal-type">
+                  <button type="button" class="library__chip is-active" data-value="paper">Paper</button>
+                  <button type="button" class="library__chip" data-value="book">Book</button>
+                  <button type="button" class="library__chip" data-value="competition">Competition</button>
+                </div>
+              </div>
+              <div class="library__field">
+                <label for="libFTitle">Title</label>
+                <input id="libFTitle" type="text" class="library__input">
+              </div>
+              <div class="library__field-row">
+                <div class="library__field">
+                  <label for="libFYear">Year</label>
+                  <input id="libFYear" type="number" class="library__input" min="1500" max="2100">
+                </div>
+                <div class="library__field">
+                  <label for="libFStatus">Status</label>
+                  <select id="libFStatus" class="library__input"></select>
+                </div>
+              </div>
+              <div class="library__field">
+                <label for="libFAuthors">Authors <span class="library__hint">(comma-separated)</span></label>
+                <input id="libFAuthors" type="text" class="library__input" placeholder="Jane Doe, John Smith">
+              </div>
+              <div class="library__field">
+                <label for="libFUrl">Primary URL</label>
+                <input id="libFUrl" type="url" class="library__input" placeholder="https://...">
+              </div>
+              <div class="library__field">
+                <label for="libFTags">Tags <span class="library__hint">(comma-separated)</span></label>
+                <input id="libFTags" type="text" class="library__input" placeholder="quant, probability">
+              </div>
+              <div class="library__field">
+                <label for="libFSummary">Summary / abstract</label>
+                <textarea id="libFSummary" class="library__input" rows="4"></textarea>
+              </div>
+            </div>
+            <footer class="library__modal-foot">
+              <button id="libModalCancel" class="library__btn library__btn--ghost">Cancel</button>
+              <button id="libModalSave" class="library__btn library__btn--primary">Save</button>
+            </footer>
+          </div>
+        </div>
+
+        <!-- Import modal -->
+        <div id="libImportModal" class="library__modal" style="display:none">
+          <div class="library__modal-card library__modal-card--small">
+            <header class="library__modal-head">
+              <h3>Import metadata</h3>
+              <button id="libImportClose" class="library__icon-btn">×</button>
+            </header>
+            <div class="library__modal-body">
+              <p class="library__hint">Paste a DOI, arXiv ID or ISBN. Type is auto-detected.</p>
+              <input id="libImportInput" type="text" class="library__input"
+                     placeholder="10.1234/abcd  ·  arxiv:2305.12345  ·  9780131103627">
+              <div id="libImportPreview" class="library__import-preview"></div>
+            </div>
+            <footer class="library__modal-foot">
+              <button id="libImportCancel" class="library__btn library__btn--ghost">Cancel</button>
+              <button id="libImportFetch" class="library__btn library__btn--ghost">Fetch</button>
+              <button id="libImportSave" class="library__btn library__btn--primary" disabled>Save to library</button>
+            </footer>
+          </div>
+        </div>
       </div>
 
     </div>

@@ -171,6 +171,22 @@
             }
         } else if (op === '/') {
             // Build cleanly divisible integer division, then optionally turn into decimal display
+            // At hard/expert there's a 30% chance of using a small decimal divisor (a / 0.0X or 0.X)
+            const useDecDivisor = (cfg.range === 'hard' || cfg.range === 'expert') && Math.random() < 0.3;
+            if (useDecDivisor) {
+                // a / 0.X or a / 0.0X — back-derive from a target answer so the answer is large
+                // (e.g. 18 / 0.02 = 900). Pick divisor, pick big clean answer, compute a.
+                const divCandidates = [0.1, 0.2, 0.25, 0.5, 0.05, 0.02, 0.04];
+                b = pick(divCandidates);
+                // Target answer in [20, 1000], multiple of 10 keeps a as clean integer/1-dp
+                const targetAns = 10 * rint(2, 100);
+                let aRaw = targetAns * b;
+                // Round to 2dp to wash out any FP noise; prefer integer a when possible
+                aRaw = Math.round(aRaw * 100) / 100;
+                a = Number.isInteger(aRaw) ? aRaw : Math.round(aRaw * 10) / 10;
+                answer = Math.round((a / b) * 100) / 100;
+                return { op, a, b, answer, problem: `${a} ÷ ${b}` };
+            }
             b = rint(Math.max(2, range.lo), Math.min(range.hi, 25));
             const quot = rint(range.lo, range.hi);
             a = b * quot;
@@ -184,11 +200,13 @@
         } else if (op === '%') {
             // Randomly pick between two percentage question forms
             const subForm = Math.random() < 0.5 ? 'of' : 'what';
+            // Percent bank now includes sub-1% values for tier-2+ to train fluency with small percentages
+            const subUnit = [0.1, 0.2, 0.4, 0.5, 0.8];
             const percentBank = cfg.range === 'easy'
                 ? [10, 20, 25, 50]
                 : (cfg.range === 'medium'
-                    ? [5, 10, 15, 20, 25, 50, 75]
-                    : [5, 10, 12, 15, 20, 25, 30, 33, 40, 50, 60, 75, 80, 90]);
+                    ? [...subUnit, 5, 10, 15, 20, 25, 50, 75]
+                    : [...subUnit, 2, 5, 10, 12, 15, 20, 25, 30, 33, 40, 50, 60, 75, 80, 90]);
             const baseHi = Math.min(range.hi * 4, 1000);
             const baseLo = Math.max(range.lo, 10);
 
@@ -197,7 +215,10 @@
                 const yMult = (a % 25 === 0) ? 4 : ((a % 10 === 0) ? 10 : 20);
                 b = yMult * rint(Math.max(1, Math.floor(baseLo / yMult)), Math.max(1, Math.floor(baseHi / yMult)));
                 answer = (a * b) / 100;
-                if (!Number.isInteger(answer)) answer = roundDecimal(answer);
+                // Sub-unit percents need 3dp; integer percents stay clean
+                if (!Number.isInteger(answer)) {
+                    answer = a < 1 ? Math.round(answer * 1000) / 1000 : roundDecimal(answer);
+                }
                 return { op, a, b, answer, problem: `${a}% of ${b}` };
             } else {
                 const pct = pick(percentBank);
@@ -282,6 +303,82 @@
                 answer = item.p;
                 return { op, a, b, answer, problem: `${item.d} = ? %` };
             }
+        } else if (op === '^') {
+            // Compare powers: pick 4 power expressions + 1 plain integer decoy.
+            // Answer is the largest value; in MC, choices show the original expressions.
+            const powerBases = cfg.range === 'easy' ? [2, 3, 4, 5]
+                              : cfg.range === 'medium' ? [2, 3, 4, 5, 6, 7]
+                              : [2, 3, 4, 5, 6, 7, 8, 9];
+            const expRange = cfg.range === 'easy' ? [2, 4]
+                            : cfg.range === 'medium' ? [3, 6]
+                            : [3, 8];
+            const candidates = [];
+            const seen = new Set();
+            let safety = 30;
+            while (candidates.length < 4 && safety-- > 0) {
+                const base = pick(powerBases);
+                const exp = rint(expRange[0], expRange[1]);
+                const val = Math.pow(base, exp);
+                const key = `${base}^${exp}`;
+                if (seen.has(key) || val > 1e7) continue;
+                seen.add(key);
+                candidates.push({ display: `${base}^${exp}`, value: val });
+            }
+            // Add a plain integer decoy near the median value (like "222" in real tests)
+            candidates.sort((x, y) => x.value - y.value);
+            const median = candidates[Math.floor(candidates.length / 2)].value;
+            const decoy = Math.max(1, Math.round(median * (0.7 + Math.random() * 0.6)));
+            candidates.push({ display: String(decoy), value: decoy });
+            // Re-sort, identify the largest
+            candidates.sort((x, y) => y.value - x.value);
+            const winner = candidates[0];
+            answer = winner.value;
+            // In type mode there are no choice buttons, so list them in the problem string
+            const typeProblem = 'Largest of: ' + candidates
+                .map(c => c.display.includes('^') ? c.display : c.display)
+                .join(', ');
+            return {
+                op, a: 0, b: 0, answer,
+                problem: cfg.input === 'mc' ? 'Which is the largest?' : typeProblem,
+                customChoices: candidates.map(c => ({ display: c.display, value: c.value })),
+            };
+        } else if (op === 'e') {
+            // Solve for ?: three patterns
+            // 1) a × ? = c        (find missing factor)
+            // 2) a = b / ?        (find missing divisor — answer can be fraction)
+            // 3) a × b = c × ?    (find missing factor on the right)
+            const pattern = pick(['mul', 'div', 'cross']);
+            if (pattern === 'mul') {
+                const factor = rint(2, Math.min(20, range.hi));
+                const missing = rint(2, Math.min(20, range.hi));
+                const c = factor * missing;
+                a = factor; b = missing;
+                answer = missing;
+                return { op, a, b, answer, problem: `${factor} × ? = ${c}` };
+            } else if (pattern === 'div') {
+                // a = b / ?  →  ? = b / a   (may be a fraction)
+                const result = rint(2, Math.min(15, range.hi));
+                const denom = rint(2, Math.min(15, range.hi));
+                const numer = result * denom;
+                a = result; b = numer;
+                answer = denom;
+                return { op, a, b, answer, problem: `${result} = ${numer} / ?` };
+            } else {
+                // a × b = c × ?  →  ? = (a × b) / c
+                let aa = rint(2, Math.min(15, range.hi));
+                let bb = rint(2, Math.min(20, range.hi));
+                const product = aa * bb;
+                // Pick a c that divides product cleanly AND isn't trivially aa or bb
+                const divisors = [];
+                for (let d = 2; d <= product / 2; d++) {
+                    if (product % d === 0 && d !== aa && d !== bb) divisors.push(d);
+                }
+                if (!divisors.length) divisors.push(aa); // fallback
+                const c = pick(divisors);
+                a = aa; b = bb;
+                answer = product / c;
+                return { op, a, b, answer, problem: `${aa} × ${bb} = ${c} × ?` };
+            }
         }
 
         const problem = `${a} ${displayOp(op)} ${b}`;
@@ -292,6 +389,7 @@
         return {
             '+': '+', '-': '−', '*': '×', '/': '÷',
             '%': '%', 'f': 'frac', 's': 'x²/√', 'c': 'conv',
+            '^': 'aᵇ', 'e': '=?',
         }[op] || op;
     }
 
@@ -691,7 +789,8 @@
         session.currentShownAt = performance.now();
         // Some problem strings already include their own '= ?' suffix (conversions, "what %")
         const display = /[?=]/.test(p.problem) ? p.problem : `${p.problem} = ?`;
-        $('mathProblem').textContent = display;
+        // Format ^N as superscript so "Largest of: 7^4, 6^5..." renders as 7⁴, 6⁵
+        $('mathProblem').textContent = formatPowerDisplay(display);
 
         // Render input or choices
         const inputForm = $('mathAnswerForm');
@@ -700,6 +799,9 @@
             inputForm.hidden = true;
             choicesEl.hidden = false;
             renderChoices(p);
+            // Scroll the problem into view (type mode does this implicitly via input focus)
+            const problemEl = $('mathProblem');
+            if (problemEl) problemEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         } else {
             inputForm.hidden = false;
             choicesEl.hidden = true;
@@ -740,6 +842,12 @@
             candidates.push(correct + 1, correct - 1, correct + p.b, correct - p.b, Math.round(correct * 1.1));
         } else if (p.op === 'c') {
             candidates.push(correct * 10, correct / 10, correct + 10, correct - 10, correct + 5, correct - 5);
+        } else if (p.op === 'e') {
+            // Solve for ?: common errors are swapping operands, off-by-1, double/half
+            candidates.push(
+                correct + 1, correct - 1, correct * 2, correct / 2,
+                p.a, p.b, Math.round(p.a + p.b), Math.abs(p.a - p.b),
+            );
         }
         // Generic perturbations
         candidates.push(
@@ -769,6 +877,18 @@
 
     function renderChoices(p) {
         const el = $('mathChoices');
+        // Op with custom display (e.g. compare powers shows "7^4" not "2401")
+        if (p.customChoices && p.customChoices.length) {
+            const all = [...p.customChoices];
+            for (let i = all.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [all[i], all[j]] = [all[j], all[i]];
+            }
+            el.innerHTML = all.map(c =>
+                `<button type="button" class="math-choice" data-value="${c.value}">${formatPowerDisplay(c.display)}</button>`
+            ).join('');
+            return;
+        }
         const distractors = genDistractors(p);
         const all = [p.answer, ...distractors];
         // Shuffle
@@ -777,6 +897,12 @@
             [all[i], all[j]] = [all[j], all[i]];
         }
         el.innerHTML = all.map(v => `<button type="button" class="math-choice" data-value="${v}">${formatChoice(v)}</button>`).join('');
+    }
+
+    // Render "7^4" as "7⁴" using superscript digits
+    function formatPowerDisplay(s) {
+        const sup = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+        return s.replace(/\^(-?\d+)/g, (_, d) => d.split('').map(c => sup[c] || c).join(''));
     }
 
     function pickChoice(v) {
@@ -813,10 +939,18 @@
         const ss = String(s % 60).padStart(2, '0');
         $('mathTimer').textContent = `${mm}:${ss}`;
 
-        const elapsed = Math.max(1, (Date.now() - session.started) / 1000);
+        // Cap elapsed at durationS so pace freezes once time is up
+        // (prevents pace from drifting downward between 00:00 and the endSession callback)
+        const rawElapsed = (Date.now() - session.started) / 1000;
+        const elapsed = Math.max(1, Math.min(session.durationS, rawElapsed));
         const correct = session.attempts.filter(a => a.is_correct).length;
         const pace = (correct / elapsed) * 60;
         $('mathPaceCount').textContent = pace.toFixed(1);
+
+        // If time is up, end immediately rather than waiting for the setTimeout
+        if (remaining === 0 && session.active) {
+            endSession();
+        }
     }
 
     function flashFeedback(ok, expected) {
@@ -829,6 +963,8 @@
 
     function submitAnswer() {
         if (!session.active || !session.current) return;
+        // Reject late submissions after time has expired
+        if (Date.now() >= session.endsAt) { endSession(); return; }
         const inp = $('mathAnswerInput');
         const raw = inp.value;
         const userVal = parseUserAnswer(raw);
@@ -1188,6 +1324,7 @@
             const labelMap = {
                 '+': 'Addition', '-': 'Subtraction', '*': 'Multiplication', '/': 'Division',
                 '%': 'Percentages', 'f': 'Fractions', 's': 'Squares & roots', 'c': 'Conversions',
+                '^': 'Compare powers', 'e': 'Solve for ?',
             };
             s.by_op.forEach(row => {
                 const acc = row.accuracy != null ? `${(row.accuracy * 100).toFixed(0)}%` : '—';

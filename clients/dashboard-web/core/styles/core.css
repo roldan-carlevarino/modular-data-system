@@ -260,7 +260,8 @@ label {
 #tab9:checked ~ .tab-labels label[for="tab9"],
 #tab10:checked ~ .tab-labels label[for="tab10"],
 #tab11:checked ~ .tab-labels label[for="tab11"],
-#tab12:checked ~ .tab-labels label[for="tab12"] {
+#tab12:checked ~ .tab-labels label[for="tab12"],
+#tab13:checked ~ .tab-labels label[for="tab13"] {
   background: var(--accent-primary);
   color: white;
   font-weight: 600;
@@ -292,7 +293,8 @@ label {
 #tab9:checked ~ .tab-content .c9,
 #tab10:checked ~ .tab-content .c10,
 #tab11:checked ~ .tab-content .c11,
-#tab12:checked ~ .tab-content .c12 {
+#tab12:checked ~ .tab-content .c12,
+#tab13:checked ~ .tab-content .c13 {
   display: block;
 }
 

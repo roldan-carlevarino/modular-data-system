@@ -29,6 +29,7 @@ from routers.menu import router as menu_router
 from routers.welfare import router as welfare_router
 from routers.math_trainer import router as math_trainer_router
 from routers.library import router as library_router
+from routers.careers import router as careers_router
 
 
 def _run_migrations():
@@ -166,6 +167,116 @@ def _run_migrations():
         cur.execute("""
             CREATE INDEX IF NOT EXISTS lib_tag_tag_idx ON lib_tag(tag);
         """)
+
+        # ---- Careers: internships, new-grad, research, grants ----
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS career_application (
+                id SERIAL PRIMARY KEY,
+                type TEXT NOT NULL DEFAULT 'internship',
+                company TEXT NOT NULL,
+                role TEXT NOT NULL,
+                location TEXT,
+                status TEXT NOT NULL DEFAULT 'saved',
+                source TEXT,
+                applied_at DATE,
+                deadline DATE,
+                start_date DATE,
+                end_date DATE,
+                salary TEXT,
+                url TEXT,
+                notes TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_status_idx ON career_application(status);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_deadline_idx ON career_application(deadline)
+            WHERE deadline IS NOT NULL;
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_updated_idx ON career_application(updated_at DESC);
+        """)
+
+        # Career events: timeline of interactions (interview, OA, offer, note...)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS career_event (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES career_application(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL DEFAULT 'note',
+                title TEXT,
+                body TEXT,
+                occurred_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_event_app_idx
+                ON career_event(application_id, occurred_at DESC);
+        """)
+
+        # Career contacts: recruiters, referrals, interviewers per application
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS career_contact (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES career_application(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                role TEXT,
+                email TEXT,
+                phone TEXT,
+                linkedin TEXT,
+                relationship TEXT NOT NULL DEFAULT 'recruiter',
+                notes TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_contact_app_idx
+                ON career_contact(application_id);
+        """)
+
+        # Career people: standalone CRM for research outreach (LinkedIn etc.)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS career_person (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                headline TEXT,
+                company TEXT,
+                location TEXT,
+                linkedin TEXT,
+                email TEXT,
+                website TEXT,
+                category TEXT NOT NULL DEFAULT 'other',
+                outreach_status TEXT NOT NULL DEFAULT 'to_contact',
+                tags TEXT[] NOT NULL DEFAULT '{}',
+                interest INTEGER NOT NULL DEFAULT 2,
+                last_contact_at DATE,
+                notes TEXT,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_person_category_idx
+                ON career_person(category);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_person_status_idx
+                ON career_person(outreach_status);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS career_person_tags_idx
+                ON career_person USING GIN(tags);
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -238,6 +349,7 @@ app.include_router(menu_router, dependencies=_auth)
 app.include_router(welfare_router, dependencies=_auth)
 app.include_router(math_trainer_router, dependencies=_auth)
 app.include_router(library_router, dependencies=_auth)
+app.include_router(careers_router, dependencies=_auth)
 
 @app.get("/")
 def root():

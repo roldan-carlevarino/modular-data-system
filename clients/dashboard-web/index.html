@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="rss/rss.css">
   <link rel="stylesheet" href="math/math.css">
   <link rel="stylesheet" href="library/library.css">
+  <link rel="stylesheet" href="careers/careers.css">
   <!-- Design refresh layer (Notion-like UI + Overleaf-like Intel). Remove this line to roll back. -->
   <link rel="stylesheet" href="core/styles/refresh.css">
 
@@ -65,6 +66,7 @@
   <script defer src="rss/rss.js"></script>
   <script defer src="math/math.js"></script>
   <script defer src="library/library.js"></script>
+  <script defer src="careers/careers.js"></script>
 </head>
 
 <body>
@@ -129,6 +131,7 @@
     <input type="radio" name="tab" id="tab10">
     <input type="radio" name="tab" id="tab11">
     <input type="radio" name="tab" id="tab12">
+    <input type="radio" name="tab" id="tab13">
 
     <div class="tab-labels">
       <label for="tab1">Home</label>
@@ -143,6 +146,7 @@
       <label for="tab10">System</label>
       <label for="tab11">Math</label>
       <label for="tab12">Library</label>
+      <label for="tab13">Careers</label>
     </div>
 
     <div class="tab-content">
@@ -1306,6 +1310,302 @@
               <button id="libImportCancel" class="library__btn library__btn--ghost">Cancel</button>
               <button id="libImportFetch" class="library__btn library__btn--ghost">Fetch</button>
               <button id="libImportSave" class="library__btn library__btn--primary" disabled>Save to library</button>
+            </footer>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== TAB 13: CAREERS ====== -->
+      <div class="content c13">
+        <section class="careers">
+          <header class="careers__header">
+            <div>
+              <h2 class="careers__title">Careers</h2>
+              <p class="careers__subtitle">Internships, new-grad, research and grants pipeline.</p>
+            </div>
+            <div class="careers__header-actions">
+              <input id="careerSearch" class="careers__search" type="search" placeholder="Search company / role / notes…">
+              <button id="careerNewBtn" class="careers__btn careers__btn--primary">+ New application</button>
+              <button id="careerNewPersonBtn" class="careers__btn careers__btn--primary" style="display:none">+ New person</button>
+            </div>
+          </header>
+
+          <nav class="careers__subtabs" role="tablist">
+            <button type="button" class="careers__subtab is-active" data-view="pipeline">Pipeline</button>
+            <button type="button" class="careers__subtab" data-view="people">People</button>
+          </nav>
+
+          <!-- Pipeline view -->
+          <div class="careers__view" data-view="pipeline">
+            <div class="careers__filters">
+              <div class="careers__chips" data-group="career-type">
+                <button type="button" class="careers__chip is-active" data-value="">All types</button>
+                <button type="button" class="careers__chip" data-value="internship">Internship</button>
+                <button type="button" class="careers__chip" data-value="new_grad">New-grad</button>
+                <button type="button" class="careers__chip" data-value="research">Research</button>
+                <button type="button" class="careers__chip" data-value="phd">PhD</button>
+                <button type="button" class="careers__chip" data-value="summer_school">Summer school</button>
+                <button type="button" class="careers__chip" data-value="grant">Grant</button>
+              </div>
+              <label class="careers__toggle">
+                <input id="careerActiveOnly" type="checkbox"> Active only
+              </label>
+              <div class="careers__stats" id="careerStats"></div>
+              <button id="careerOverviewToggle" type="button" class="careers__btn careers__btn--ghost">Show overview</button>
+            </div>
+
+            <div id="careerOverview" class="careers__overview" style="display:none"></div>
+
+            <div class="careers__board" id="careerBoard"></div>
+          </div>
+
+          <!-- People view -->
+          <div class="careers__view" data-view="people" style="display:none">
+            <div class="careers__filters">
+              <div class="careers__chips" data-group="person-category">
+                <button type="button" class="careers__chip is-active" data-value="">All</button>
+                <button type="button" class="careers__chip" data-value="researcher">Researchers</button>
+                <button type="button" class="careers__chip" data-value="phd_student">PhDs</button>
+                <button type="button" class="careers__chip" data-value="junior">Juniors</button>
+                <button type="button" class="careers__chip" data-value="alumni">Alumni</button>
+                <button type="button" class="careers__chip" data-value="recruiter">Recruiters</button>
+                <button type="button" class="careers__chip" data-value="hiring_manager">Hiring mgrs</button>
+                <button type="button" class="careers__chip" data-value="engineer">Engineers</button>
+                <button type="button" class="careers__chip" data-value="founder">Founders</button>
+                <button type="button" class="careers__chip" data-value="professor">Professors</button>
+                <button type="button" class="careers__chip" data-value="other">Other</button>
+              </div>
+              <select id="careerPersonStatus" class="careers__input careers__input--inline">
+                <option value="">All statuses</option>
+                <option value="to_contact">To contact</option>
+                <option value="contacted">Contacted</option>
+                <option value="replied">Replied</option>
+                <option value="in_conversation">In conversation</option>
+                <option value="intro_done">Intro done</option>
+                <option value="stalled">Stalled</option>
+                <option value="archived">Archived</option>
+              </select>
+              <input id="careerPersonSearch" class="careers__search" type="search" placeholder="Search name / company / headline / notes…">
+            </div>
+
+            <div class="careers__people-tags" id="careerPersonTags"></div>
+
+            <div class="careers__people" id="careerPeople"></div>
+          </div>
+        </section>
+
+        <!-- Application modal -->
+        <div id="careerModal" class="careers__modal" style="display:none">
+          <div class="careers__modal-card">
+            <header class="careers__modal-head">
+              <h3 id="careerModalTitle">New application</h3>
+              <button id="careerModalClose" class="careers__icon-btn" aria-label="Close">×</button>
+            </header>
+            <div class="careers__modal-body">
+              <div class="careers__field-row">
+                <div class="careers__field" style="flex:2">
+                  <label for="careerFCompany">Company *</label>
+                  <input id="careerFCompany" type="text" class="careers__input" placeholder="Jane Street">
+                </div>
+                <div class="careers__field" style="flex:1">
+                  <label for="careerFType">Type</label>
+                  <select id="careerFType" class="careers__input">
+                    <option value="internship">Internship</option>
+                    <option value="new_grad">New-grad</option>
+                    <option value="research">Research</option>
+                    <option value="phd">PhD</option>
+                    <option value="summer_school">Summer school</option>
+                    <option value="grant">Grant</option>
+                  </select>
+                </div>
+              </div>
+              <div class="careers__field">
+                <label for="careerFRole">Role *</label>
+                <input id="careerFRole" type="text" class="careers__input" placeholder="Quant Trader Intern Summer 2027">
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerFLocation">Location</label>
+                  <input id="careerFLocation" type="text" class="careers__input" placeholder="London, UK / remote">
+                </div>
+                <div class="careers__field">
+                  <label for="careerFStatus">Status</label>
+                  <select id="careerFStatus" class="careers__input">
+                    <option value="saved">saved</option>
+                    <option value="applied">applied</option>
+                    <option value="oa">oa</option>
+                    <option value="phone">phone</option>
+                    <option value="onsite">onsite</option>
+                    <option value="offer">offer</option>
+                    <option value="accepted">accepted</option>
+                    <option value="rejected">rejected</option>
+                    <option value="withdrawn">withdrawn</option>
+                    <option value="ghosted">ghosted</option>
+                  </select>
+                </div>
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerFApplied">Applied at</label>
+                  <input id="careerFApplied" type="date" class="careers__input">
+                </div>
+                <div class="careers__field">
+                  <label for="careerFDeadline">Deadline</label>
+                  <input id="careerFDeadline" type="date" class="careers__input">
+                </div>
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerFStart">Start date</label>
+                  <input id="careerFStart" type="date" class="careers__input">
+                </div>
+                <div class="careers__field">
+                  <label for="careerFEnd">End date</label>
+                  <input id="careerFEnd" type="date" class="careers__input">
+                </div>
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerFSalary">Salary</label>
+                  <input id="careerFSalary" type="text" class="careers__input" placeholder="$8k/month + housing">
+                </div>
+                <div class="careers__field">
+                  <label for="careerFSource">Source</label>
+                  <input id="careerFSource" type="text" class="careers__input" placeholder="referral:Pedro · linkedin">
+                </div>
+              </div>
+              <div class="careers__field">
+                <label for="careerFUrl">Job posting URL</label>
+                <input id="careerFUrl" type="url" class="careers__input" placeholder="https://...">
+              </div>
+              <div class="careers__field">
+                <label for="careerFNotes">Notes</label>
+                <textarea id="careerFNotes" class="careers__input" rows="3"
+                          placeholder="Recruiter, interview prep, key contacts…"></textarea>
+              </div>
+            </div>
+            <footer class="careers__modal-foot">
+              <button id="careerModalDelete" class="careers__btn careers__btn--danger" style="margin-right:auto;display:none">Delete</button>
+              <button id="careerModalCancel" class="careers__btn careers__btn--ghost">Cancel</button>
+              <button id="careerModalSave" class="careers__btn careers__btn--primary">Save</button>
+            </footer>
+          </div>
+        </div>
+
+        <!-- Detail drawer (slide-in right) -->
+        <div id="careerDrawer" class="careers__drawer" style="display:none">
+          <div class="careers__drawer-backdrop" id="careerDrawerBackdrop"></div>
+          <aside class="careers__drawer-panel" id="careerDrawerPanel">
+            <header class="careers__drawer-head">
+              <div id="careerDrawerTitle" class="careers__drawer-title"></div>
+              <div class="careers__drawer-actions">
+                <button id="careerDrawerEdit" class="careers__btn careers__btn--ghost">Edit</button>
+                <button id="careerDrawerClose" class="careers__icon-btn" aria-label="Close">×</button>
+              </div>
+            </header>
+            <div class="careers__drawer-body" id="careerDrawerBody"></div>
+          </aside>
+        </div>
+
+        <!-- Person modal -->
+        <div id="careerPersonModal" class="careers__modal" style="display:none">
+          <div class="careers__modal-card">
+            <header class="careers__modal-head">
+              <h3 id="careerPersonModalTitle">New person</h3>
+              <button id="careerPersonModalClose" class="careers__icon-btn" aria-label="Close">×</button>
+            </header>
+            <div class="careers__modal-body">
+              <div class="careers__field-row">
+                <div class="careers__field" style="flex:2">
+                  <label for="careerPFName">Name *</label>
+                  <input id="careerPFName" type="text" class="careers__input" placeholder="Yann LeCun">
+                </div>
+                <div class="careers__field" style="flex:1">
+                  <label for="careerPFCategory">Category</label>
+                  <select id="careerPFCategory" class="careers__input">
+                    <option value="researcher">Researcher</option>
+                    <option value="phd_student">PhD student</option>
+                    <option value="junior">Junior</option>
+                    <option value="alumni">Alumni</option>
+                    <option value="recruiter">Recruiter</option>
+                    <option value="hiring_manager">Hiring manager</option>
+                    <option value="engineer">Engineer</option>
+                    <option value="founder">Founder</option>
+                    <option value="professor">Professor</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+              <div class="careers__field">
+                <label for="careerPFHeadline">Headline</label>
+                <input id="careerPFHeadline" type="text" class="careers__input"
+                       placeholder="Chief AI Scientist · NYU professor">
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerPFCompany">Company / lab</label>
+                  <input id="careerPFCompany" type="text" class="careers__input" placeholder="Meta FAIR">
+                </div>
+                <div class="careers__field">
+                  <label for="careerPFLocation">Location</label>
+                  <input id="careerPFLocation" type="text" class="careers__input" placeholder="New York, US">
+                </div>
+              </div>
+              <div class="careers__field">
+                <label for="careerPFLinkedin">LinkedIn URL</label>
+                <input id="careerPFLinkedin" type="url" class="careers__input" placeholder="https://linkedin.com/in/...">
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerPFEmail">Email</label>
+                  <input id="careerPFEmail" type="email" class="careers__input" placeholder="name@example.com">
+                </div>
+                <div class="careers__field">
+                  <label for="careerPFWebsite">Website</label>
+                  <input id="careerPFWebsite" type="url" class="careers__input" placeholder="https://...">
+                </div>
+              </div>
+              <div class="careers__field-row">
+                <div class="careers__field">
+                  <label for="careerPFStatus">Outreach status</label>
+                  <select id="careerPFStatus" class="careers__input">
+                    <option value="to_contact">To contact</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="replied">Replied</option>
+                    <option value="in_conversation">In conversation</option>
+                    <option value="intro_done">Intro done</option>
+                    <option value="stalled">Stalled</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+                <div class="careers__field">
+                  <label for="careerPFInterest">Interest</label>
+                  <select id="careerPFInterest" class="careers__input">
+                    <option value="3">★★★ High</option>
+                    <option value="2" selected>★★ Medium</option>
+                    <option value="1">★ Low</option>
+                  </select>
+                </div>
+                <div class="careers__field">
+                  <label for="careerPFLastContact">Last contact</label>
+                  <input id="careerPFLastContact" type="date" class="careers__input">
+                </div>
+              </div>
+              <div class="careers__field">
+                <label for="careerPFTags">Tags <span class="careers__hint" style="display:inline">(comma-separated)</span></label>
+                <input id="careerPFTags" type="text" class="careers__input"
+                       placeholder="quant, london, alumni-uam, ml-research">
+              </div>
+              <div class="careers__field">
+                <label for="careerPFNotes">Notes</label>
+                <textarea id="careerPFNotes" class="careers__input" rows="4"
+                          placeholder="Why interesting · context · what to ask · last conversation summary…"></textarea>
+              </div>
+            </div>
+            <footer class="careers__modal-foot">
+              <button id="careerPersonModalDelete" class="careers__btn careers__btn--danger" style="margin-right:auto;display:none">Delete</button>
+              <button id="careerPersonModalCancel" class="careers__btn careers__btn--ghost">Cancel</button>
+              <button id="careerPersonModalSave" class="careers__btn careers__btn--primary">Save</button>
             </footer>
           </div>
         </div>

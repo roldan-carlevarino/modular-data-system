@@ -181,8 +181,19 @@
         }
         const r = await fetch(`${API}${path}`, opts);
         if (!r.ok) {
-            let msg = r.statusText;
-            try { msg = (await r.json()).detail || msg; } catch (_) {}
+            let msg = `${r.status} ${r.statusText}`;
+            try {
+                const j = await r.json();
+                if (typeof j.detail === "string") {
+                    msg = j.detail;
+                } else if (Array.isArray(j.detail)) {
+                    // FastAPI 422: list of {loc, msg, type}
+                    msg = j.detail.map((d) =>
+                        `${(d.loc || []).join(".")}: ${d.msg}`).join(" | ");
+                } else if (j.detail) {
+                    msg = JSON.stringify(j.detail);
+                }
+            } catch (_) {}
             throw new Error(msg);
         }
         if (r.status === 204) return null;
@@ -815,7 +826,7 @@
 
     async function loadPersonTags() {
         try {
-            const tags = await api("/careers/people/meta/tags");
+            const tags = await api("/careers/people-tags");
             renderPersonTags(tags);
         } catch (_) {
             $("careerPersonTags").innerHTML = "";

@@ -219,6 +219,297 @@ def create_application(payload: dict):
         conn.close()
 
 
+# ---------- People (research / outreach CRM) ----------
+# IMPORTANT: declared BEFORE /{app_id} routes to avoid path collision
+# (otherwise /careers/people would be parsed as app_id="people" → 422).
+
+VALID_PERSON_CATEGORIES = {
+    "researcher", "junior", "alumni", "recruiter", "hiring_manager",
+    "founder", "engineer", "professor", "phd_student", "other",
+}
+VALID_OUTREACH_STATUSES = {
+    "to_contact", "contacted", "replied", "in_conversation",
+    "intro_done", "stalled", "archived",
+}
+
+
+def _person_row(r):
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "headline": r["headline"],
+        "company": r["company"],
+        "location": r["location"],
+        "linkedin": r["linkedin"],
+        "email": r["email"],
+        "website": r["website"],
+        "category": r["category"],
+        "outreach_status": r["outreach_status"],
+        "tags": list(r["tags"] or []),
+        "interest": r["interest"],
+        "last_contact_at": r["last_contact_at"].isoformat() if r["last_contact_at"] else None,
+        "notes": r["notes"],
+        "metadata": r["metadata"] or {},
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+    }
+
+
+def _normalize_tags(val):
+    if val is None:
+        return []
+    if isinstance(val, str):
+        val = [t.strip() for t in val.split(",")]
+    if not isinstance(val, list):
+        raise HTTPException(400, "tags must be a list of strings")
+    return [str(t).strip() for t in val if str(t).strip()]
+
+
+@router.get("/people")
+def list_people(
+    category: Optional[str] = None,
+    outreach_status: Optional[str] = None,
+    tag: Optional[str] = None,
+    q: Optional[str] = None,
+    sort: str = Query("updated", pattern="^(updated|name|interest|last_contact)$"),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    where = []
+    params = []
+    if category:
+        if category not in VALID_PERSON_CATEGORIES:
+            raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
+        where.append("category = %s")
+        params.append(category)
+    if outreach_status:
+        if outreach_status not in VALID_OUTREACH_STATUSES:
+            raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
+        where.append("outreach_status = %s")
+        params.append(outreach_status)
+    if tag:
+        where.append("%s = ANY(tags)")
+        params.append(tag)
+    if q:
+        where.append("(name ILIKE %s OR company ILIKE %s OR headline ILIKE %s OR notes ILIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+
+    order = {
+        "updated": "updated_at DESC",
+        "name": "name ASC",
+        "interest": "interest DESC, updated_at DESC",
+        "last_contact": "last_contact_at DESC NULLS LAST",
+    }[sort]
+
+    sql = "SELECT * FROM career_person"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
+
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute(sql, params)
+        return [_person_row(r) for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/people")
+def create_person(payload: dict):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+
+    category = (payload.get("category") or "other").strip()
+    if category not in VALID_PERSON_CATEGORIES:
+        raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
+
+    outreach_status = (payload.get("outreach_status") or "to_contact").strip()
+    if outreach_status not in VALID_OUTREACH_STATUSES:
+        raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
+
+    interest = payload.get("interest", 2)
+    try:
+        interest = int(interest)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "interest must be an integer 1-3")
+    if interest < 1 or interest > 3:
+        raise HTTPException(400, "interest must be 1, 2, or 3")
+
+    tags = _normalize_tags(payload.get("tags"))
+    last_contact = _parse_date(payload.get("last_contact_at"), "last_contact_at")
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO career_person (
+                name, headline, company, location, linkedin, email, website,
+                category, outreach_status, tags, interest, last_contact_at, notes, metadata
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            RETURNING id
+        """, (
+            name,
+            payload.get("headline"),
+            payload.get("company"),
+            payload.get("location"),
+            payload.get("linkedin"),
+            payload.get("email"),
+            payload.get("website"),
+            category,
+            outreach_status,
+            tags,
+            interest,
+            last_contact,
+            payload.get("notes"),
+            json.dumps(payload.get("metadata") or {}),
+        ))
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"id": new_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Failed to create person: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/people/{pid}")
+def get_person(pid: int):
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute("SELECT * FROM career_person WHERE id = %s", (pid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Person not found")
+        return _person_row(r)
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.patch("/people/{pid}")
+def update_person(pid: int, payload: dict):
+    fields = []
+    params = []
+
+    for col in ("name", "headline", "company", "location",
+                "linkedin", "email", "website", "notes"):
+        if col in payload:
+            val = payload[col]
+            if col == "name" and (val is None or not str(val).strip()):
+                raise HTTPException(400, "name cannot be empty")
+            fields.append(f"{col} = %s")
+            params.append(val)
+
+    if "category" in payload:
+        cat = (payload["category"] or "").strip()
+        if cat not in VALID_PERSON_CATEGORIES:
+            raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
+        fields.append("category = %s")
+        params.append(cat)
+
+    if "outreach_status" in payload:
+        st = (payload["outreach_status"] or "").strip()
+        if st not in VALID_OUTREACH_STATUSES:
+            raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
+        fields.append("outreach_status = %s")
+        params.append(st)
+
+    if "interest" in payload:
+        try:
+            iv = int(payload["interest"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "interest must be an integer 1-3")
+        if iv < 1 or iv > 3:
+            raise HTTPException(400, "interest must be 1, 2, or 3")
+        fields.append("interest = %s")
+        params.append(iv)
+
+    if "tags" in payload:
+        fields.append("tags = %s")
+        params.append(_normalize_tags(payload["tags"]))
+
+    if "last_contact_at" in payload:
+        fields.append("last_contact_at = %s")
+        params.append(_parse_date(payload["last_contact_at"], "last_contact_at"))
+
+    if "metadata" in payload:
+        fields.append("metadata = %s::jsonb")
+        params.append(json.dumps(payload["metadata"] or {}))
+
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+
+    fields.append("updated_at = NOW()")
+    params.append(pid)
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"UPDATE career_person SET {', '.join(fields)} WHERE id = %s",
+            params,
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Person not found")
+        conn.commit()
+        return {"ok": True}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Failed to update person: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.delete("/people/{pid}")
+def delete_person(pid: int):
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM career_person WHERE id = %s", (pid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Person not found")
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/people-tags")
+def list_person_tags():
+    """Distinct list of all tags across people, with counts."""
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT tag, COUNT(*) AS n
+            FROM (
+                SELECT UNNEST(tags) AS tag FROM career_person
+            ) t
+            GROUP BY tag
+            ORDER BY n DESC, tag ASC
+        """)
+        return [{"tag": r[0], "n": r[1]} for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
 @router.get("/{app_id}")
 def get_application(app_id: int):
     conn = _conn()
@@ -739,290 +1030,4 @@ def intel_widgets(deadline_days: int = Query(14, ge=1, le=90),
     }
 
 
-# ---------- People (research / outreach CRM) ----------
-
-VALID_PERSON_CATEGORIES = {
-    "researcher", "junior", "alumni", "recruiter", "hiring_manager",
-    "founder", "engineer", "professor", "phd_student", "other",
-}
-VALID_OUTREACH_STATUSES = {
-    "to_contact", "contacted", "replied", "in_conversation",
-    "intro_done", "stalled", "archived",
-}
-
-
-def _person_row(r):
-    return {
-        "id": r["id"],
-        "name": r["name"],
-        "headline": r["headline"],
-        "company": r["company"],
-        "location": r["location"],
-        "linkedin": r["linkedin"],
-        "email": r["email"],
-        "website": r["website"],
-        "category": r["category"],
-        "outreach_status": r["outreach_status"],
-        "tags": list(r["tags"] or []),
-        "interest": r["interest"],
-        "last_contact_at": r["last_contact_at"].isoformat() if r["last_contact_at"] else None,
-        "notes": r["notes"],
-        "metadata": r["metadata"] or {},
-        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
-    }
-
-
-def _normalize_tags(val):
-    if val is None:
-        return []
-    if isinstance(val, str):
-        val = [t.strip() for t in val.split(",")]
-    if not isinstance(val, list):
-        raise HTTPException(400, "tags must be a list of strings")
-    return [str(t).strip() for t in val if str(t).strip()]
-
-
-@router.get("/people")
-def list_people(
-    category: Optional[str] = None,
-    outreach_status: Optional[str] = None,
-    tag: Optional[str] = None,
-    q: Optional[str] = None,
-    sort: str = Query("updated", pattern="^(updated|name|interest|last_contact)$"),
-    limit: int = Query(500, ge=1, le=2000),
-    offset: int = Query(0, ge=0),
-):
-    where = []
-    params = []
-    if category:
-        if category not in VALID_PERSON_CATEGORIES:
-            raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
-        where.append("category = %s")
-        params.append(category)
-    if outreach_status:
-        if outreach_status not in VALID_OUTREACH_STATUSES:
-            raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
-        where.append("outreach_status = %s")
-        params.append(outreach_status)
-    if tag:
-        where.append("%s = ANY(tags)")
-        params.append(tag)
-    if q:
-        where.append("(name ILIKE %s OR company ILIKE %s OR headline ILIKE %s OR notes ILIKE %s)")
-        like = f"%{q}%"
-        params.extend([like, like, like, like])
-
-    order = {
-        "updated": "updated_at DESC",
-        "name": "name ASC",
-        "interest": "interest DESC, updated_at DESC",
-        "last_contact": "last_contact_at DESC NULLS LAST",
-    }[sort]
-
-    sql = "SELECT * FROM career_person"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += f" ORDER BY {order} LIMIT %s OFFSET %s"
-    params.extend([limit, offset])
-
-    conn = _conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    try:
-        cur.execute(sql, params)
-        return [_person_row(r) for r in cur.fetchall()]
-    finally:
-        cur.close()
-        conn.close()
-
-
-@router.post("/people")
-def create_person(payload: dict):
-    name = (payload.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "name is required")
-
-    category = (payload.get("category") or "other").strip()
-    if category not in VALID_PERSON_CATEGORIES:
-        raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
-
-    outreach_status = (payload.get("outreach_status") or "to_contact").strip()
-    if outreach_status not in VALID_OUTREACH_STATUSES:
-        raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
-
-    interest = payload.get("interest", 2)
-    try:
-        interest = int(interest)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "interest must be an integer 1-3")
-    if interest < 1 or interest > 3:
-        raise HTTPException(400, "interest must be 1, 2, or 3")
-
-    tags = _normalize_tags(payload.get("tags"))
-    last_contact = _parse_date(payload.get("last_contact_at"), "last_contact_at")
-
-    conn = _conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            INSERT INTO career_person (
-                name, headline, company, location, linkedin, email, website,
-                category, outreach_status, tags, interest, last_contact_at, notes, metadata
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-            RETURNING id
-        """, (
-            name,
-            payload.get("headline"),
-            payload.get("company"),
-            payload.get("location"),
-            payload.get("linkedin"),
-            payload.get("email"),
-            payload.get("website"),
-            category,
-            outreach_status,
-            tags,
-            interest,
-            last_contact,
-            payload.get("notes"),
-            json.dumps(payload.get("metadata") or {}),
-        ))
-        new_id = cur.fetchone()[0]
-        conn.commit()
-        return {"id": new_id}
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(500, f"Failed to create person: {e}")
-    finally:
-        cur.close()
-        conn.close()
-
-
-@router.get("/people/{pid}")
-def get_person(pid: int):
-    conn = _conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    try:
-        cur.execute("SELECT * FROM career_person WHERE id = %s", (pid,))
-        r = cur.fetchone()
-        if not r:
-            raise HTTPException(404, "Person not found")
-        return _person_row(r)
-    finally:
-        cur.close()
-        conn.close()
-
-
-@router.patch("/people/{pid}")
-def update_person(pid: int, payload: dict):
-    fields = []
-    params = []
-
-    for col in ("name", "headline", "company", "location",
-                "linkedin", "email", "website", "notes"):
-        if col in payload:
-            val = payload[col]
-            if col == "name" and (val is None or not str(val).strip()):
-                raise HTTPException(400, "name cannot be empty")
-            fields.append(f"{col} = %s")
-            params.append(val)
-
-    if "category" in payload:
-        cat = (payload["category"] or "").strip()
-        if cat not in VALID_PERSON_CATEGORIES:
-            raise HTTPException(400, f"category must be one of {sorted(VALID_PERSON_CATEGORIES)}")
-        fields.append("category = %s")
-        params.append(cat)
-
-    if "outreach_status" in payload:
-        st = (payload["outreach_status"] or "").strip()
-        if st not in VALID_OUTREACH_STATUSES:
-            raise HTTPException(400, f"outreach_status must be one of {sorted(VALID_OUTREACH_STATUSES)}")
-        fields.append("outreach_status = %s")
-        params.append(st)
-
-    if "interest" in payload:
-        try:
-            iv = int(payload["interest"])
-        except (TypeError, ValueError):
-            raise HTTPException(400, "interest must be an integer 1-3")
-        if iv < 1 or iv > 3:
-            raise HTTPException(400, "interest must be 1, 2, or 3")
-        fields.append("interest = %s")
-        params.append(iv)
-
-    if "tags" in payload:
-        fields.append("tags = %s")
-        params.append(_normalize_tags(payload["tags"]))
-
-    if "last_contact_at" in payload:
-        fields.append("last_contact_at = %s")
-        params.append(_parse_date(payload["last_contact_at"], "last_contact_at"))
-
-    if "metadata" in payload:
-        fields.append("metadata = %s::jsonb")
-        params.append(json.dumps(payload["metadata"] or {}))
-
-    if not fields:
-        raise HTTPException(400, "no fields to update")
-
-    fields.append("updated_at = NOW()")
-    params.append(pid)
-
-    conn = _conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            f"UPDATE career_person SET {', '.join(fields)} WHERE id = %s",
-            params,
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Person not found")
-        conn.commit()
-        return {"ok": True}
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(500, f"Failed to update person: {e}")
-    finally:
-        cur.close()
-        conn.close()
-
-
-@router.delete("/people/{pid}")
-def delete_person(pid: int):
-    conn = _conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM career_person WHERE id = %s", (pid,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "Person not found")
-        conn.commit()
-        return {"ok": True}
-    finally:
-        cur.close()
-        conn.close()
-
-
-@router.get("/people/meta/tags")
-def list_person_tags():
-    """Distinct list of all tags across people, with counts."""
-    conn = _conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            SELECT tag, COUNT(*) AS n
-            FROM (
-                SELECT UNNEST(tags) AS tag FROM career_person
-            ) t
-            GROUP BY tag
-            ORDER BY n DESC, tag ASC
-        """)
-        return [{"tag": r[0], "n": r[1]} for r in cur.fetchall()]
-    finally:
-        cur.close()
-        conn.close()
+# ---------- People moved above /{app_id} to avoid path collision ----------

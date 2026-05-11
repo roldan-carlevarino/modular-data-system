@@ -7,6 +7,8 @@ Status workflow (UI columns, in canonical order):
 Types: internship | new_grad | research | phd | summer_school | grant
 """
 
+import csv
+import io
 import json
 import os
 from datetime import date, datetime
@@ -14,7 +16,7 @@ from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 router = APIRouter(prefix="/careers", tags=["Careers"])
 
@@ -508,6 +510,121 @@ def list_person_tags():
     finally:
         cur.close()
         conn.close()
+
+
+@router.post("/people/import-linkedin")
+async def import_linkedin_csv(file: UploadFile = File(...)):
+    """
+    Import a LinkedIn 'Connections.csv' export.
+    Format (after the 3 leading 'Notes' lines):
+      First Name, Last Name, URL, Email Address, Company, Position, Connected On
+    Dedup by linkedin URL: existing rows have company/position/email refreshed,
+    'linkedin' tag ensured. New rows inserted with defaults
+    (category=other, outreach_status=to_contact, interest=2, tag=linkedin).
+    """
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    # LinkedIn export prepends a 'Notes:' block; the real CSV header starts at
+    # the first line containing 'First Name'. Skip everything before it.
+    lines = text.splitlines()
+    header_idx = next(
+        (i for i, ln in enumerate(lines) if ln.lower().startswith("first name")),
+        None,
+    )
+    if header_idx is None:
+        raise HTTPException(400, "CSV does not look like a LinkedIn Connections export")
+
+    reader = csv.DictReader(lines[header_idx:])
+
+    inserted = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        for row in reader:
+            try:
+                first = (row.get("First Name") or "").strip()
+                last = (row.get("Last Name") or "").strip()
+                name = (first + " " + last).strip()
+                url = (row.get("URL") or "").strip() or None
+                email = (row.get("Email Address") or "").strip() or None
+                company = (row.get("Company") or "").strip() or None
+                position = (row.get("Position") or "").strip() or None
+
+                if not name and not url:
+                    skipped += 1
+                    continue
+                if not name:
+                    name = url or "(unknown)"
+
+                # Dedup by linkedin URL
+                existing_id = None
+                if url:
+                    cur.execute(
+                        "SELECT id FROM career_person WHERE linkedin = %s LIMIT 1",
+                        (url,),
+                    )
+                    r = cur.fetchone()
+                    if r:
+                        existing_id = r[0]
+
+                if existing_id is not None:
+                    cur.execute(
+                        """
+                        UPDATE career_person SET
+                            company  = COALESCE(%s, company),
+                            headline = COALESCE(%s, headline),
+                            email    = COALESCE(email, %s),
+                            tags     = (
+                                SELECT ARRAY(
+                                    SELECT DISTINCT UNNEST(COALESCE(tags, ARRAY[]::text[]) || ARRAY['linkedin']::text[])
+                                )
+                            ),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (company, position, email, existing_id),
+                    )
+                    updated += 1
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO career_person (
+                            name, headline, company, linkedin, email,
+                            category, outreach_status, tags, interest, metadata
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                        """,
+                        (
+                            name, position, company, url, email,
+                            "other", "to_contact", ["linkedin"], 2,
+                            json.dumps({"source": "linkedin_csv"}),
+                        ),
+                    )
+                    inserted += 1
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{row.get('First Name','')} {row.get('Last Name','')}: {e}")
+                skipped += 1
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Import failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors[:20],
+    }
 
 
 @router.get("/{app_id}")

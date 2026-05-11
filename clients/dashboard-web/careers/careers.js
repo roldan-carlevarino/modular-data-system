@@ -159,6 +159,10 @@
         $("careerPersonModalSave").addEventListener("click", savePersonModal);
         $("careerPersonModalDelete").addEventListener("click", deletePerson);
 
+        // LinkedIn CSV import
+        $("careerImportLinkedinBtn").addEventListener("click", () => $("careerImportLinkedinFile").click());
+        $("careerImportLinkedinFile").addEventListener("change", importLinkedinCsv);
+
         // Lazy-load on first activation
         $("tab13").addEventListener("change", () => {
             if ($("tab13").checked && !state.loaded) {
@@ -799,10 +803,49 @@
         });
         $("careerNewBtn").style.display = view === "pipeline" ? "" : "none";
         $("careerNewPersonBtn").style.display = view === "people" ? "" : "none";
+        $("careerImportLinkedinBtn").style.display = view === "people" ? "" : "none";
         if (view === "people" && !peopleState.loaded) {
             peopleState.loaded = true;
             loadPeople();
             loadPersonTags();
+        }
+    }
+
+    async function importLinkedinCsv(e) {
+        const input = e.target;
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const btn = $("careerImportLinkedinBtn");
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Importing…";
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const r = await fetch(`${API}/careers/people/import-linkedin`, {
+                method: "POST",
+                body: fd,
+            });
+            const j = await r.json();
+            if (!r.ok) {
+                throw new Error(j.detail || `${r.status} ${r.statusText}`);
+            }
+            const parts = [
+                `${j.inserted} new`,
+                `${j.updated} updated`,
+                `${j.skipped} skipped`,
+            ];
+            alert(`LinkedIn import done: ${parts.join(", ")}.${
+                j.errors && j.errors.length ? `\n\nFirst errors:\n- ${j.errors.join("\n- ")}` : ""
+            }`);
+            peopleState.loaded = true;
+            await Promise.all([loadPeople(), loadPersonTags()]);
+        } catch (err) {
+            alert(`Import failed: ${err.message}`);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+            input.value = "";
         }
     }
 

@@ -277,6 +277,12 @@ def _run_migrations():
                 ON career_person USING GIN(tags);
         """)
 
+        # Knowledge blocks: ensure 'name' column exists for older deployments
+        cur.execute("""
+            ALTER TABLE knowledge_blocks
+            ADD COLUMN IF NOT EXISTS name TEXT
+        """)
+
         conn.commit()
         cur.close()
         conn.close()

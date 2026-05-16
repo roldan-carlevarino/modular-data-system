@@ -1220,6 +1220,19 @@ function contentToHtml(text) {
   const mathChunks = [];
   const placeholder = (i) => `MATHPLACEHOLDER${i}ENDMATH`;
 
+  // Pre-pass: promote single-$ wrapped LaTeX environments (matrix, align, cases, etc.)
+  // to display math, since they typically span multiple lines and the inline regex
+  // below rejects newlines.
+  text = text.replace(
+    /\$(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\2\})\$/g,
+    (_, body) => `$$${body}$$`
+  );
+  // Also promote bare \begin{env}...\end{env} (no $ wrapping) to display math.
+  text = text.replace(
+    /(^|[^$])(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\3\})(?!\$)/g,
+    (_, pre, body) => `${pre}$$${body}$$`
+  );
+
   // Protect $$...$$ (display) first, then $...$ (inline)
   let protected_ = text
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, inner) => {
@@ -1240,10 +1253,21 @@ function contentToHtml(text) {
     html = protected_.replace(/\n/g, '<br>');
   }
 
-  // 3. Restore math expressions
+  // 3. Restore math expressions.
+  // Escape &, <, > so the browser doesn't interpret things like `i_1<i_2` or
+  // `<\cdots` as HTML tags when we set innerHTML. KaTeX walks DOM text nodes,
+  // so by the time it reads the math the entities are already decoded back
+  // to their original characters — no impact on rendering.
+  const escapeForHtml = (s) => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   mathChunks.forEach((chunk, i) => {
     const delim = chunk.display ? '$$' : '$';
-    html = html.replace(placeholder(i), `${delim}${chunk.inner}${delim}`);
+    // String.replace's replacement string treats `$` specially ($&, $`, $', $n).
+    // Use a function replacer to insert the math verbatim.
+    const safeInner = escapeForHtml(chunk.inner);
+    html = html.replace(placeholder(i), () => `${delim}${safeInner}${delim}`);
   });
 
   // 4. Restore chart blocks as placeholder divs (rendered later by renderCharts)

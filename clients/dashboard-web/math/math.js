@@ -379,6 +379,97 @@
                 answer = product / c;
                 return { op, a, b, answer, problem: `${aa} × ${bb} = ${c} × ?` };
             }
+        } else if (op === 'q') {
+            // Number sequences — quant-test style. Show 4–5 terms, ask for the next.
+            // Pattern bank scales with difficulty.
+            const patterns = (cfg.range === 'easy')
+                ? ['arith', 'geo', 'square']
+                : (cfg.range === 'medium')
+                    ? ['arith', 'geo', 'square', 'altdiff', 'incdiff', 'recur']
+                    : ['arith', 'geo', 'square', 'cube', 'altdiff', 'incdiff', 'recur', 'fib', 'altop', 'primes'];
+            const pattern = pick(patterns);
+            const terms = [];
+            let nextVal = null;
+
+            if (pattern === 'arith') {
+                const start = rint(1, 20);
+                const d = pick([2, 3, 4, 5, 6, 7, -2, -3, -4]);
+                for (let i = 0; i < 5; i++) terms.push(start + i * d);
+                nextVal = start + 5 * d;
+            } else if (pattern === 'geo') {
+                const start = rint(1, 5);
+                const r = pick([2, 3, cfg.range === 'easy' ? 2 : 4]);
+                let v = start;
+                for (let i = 0; i < 5; i++) { terms.push(v); v *= r; }
+                nextVal = start * Math.pow(r, 5);
+            } else if (pattern === 'square') {
+                const offset = rint(0, 3);
+                for (let i = 1; i <= 5; i++) terms.push((i + offset) * (i + offset));
+                nextVal = (6 + offset) * (6 + offset);
+            } else if (pattern === 'cube') {
+                for (let i = 1; i <= 5; i++) terms.push(i * i * i);
+                nextVal = 6 * 6 * 6;
+            } else if (pattern === 'altdiff') {
+                // Differences alternate between d1 and d2 (e.g. +3,+5,+3,+5,...)
+                const start = rint(1, 15);
+                const d1 = rint(2, 6);
+                const d2 = rint(2, 8);
+                let v = start;
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v += (i % 2 === 0) ? d1 : d2;
+                    terms.push(v);
+                }
+                nextVal = v + ((4 % 2 === 0) ? d1 : d2);
+            } else if (pattern === 'incdiff') {
+                // Differences grow by a constant (e.g. +1,+2,+3,+4 → 1,2,4,7,11)
+                const start = rint(1, 5);
+                const dStart = rint(1, 4);
+                const dStep = pick([1, 1, 2]);
+                let v = start;
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v += dStart + i * dStep;
+                    terms.push(v);
+                }
+                nextVal = v + dStart + 4 * dStep;
+            } else if (pattern === 'recur') {
+                // x[n] = m * x[n-1] + k  (e.g. ×2+1 → 1,3,7,15,31,63)
+                const m = pick([2, 2, 3]);
+                const k = pick([-1, 1, 1, 2, 3]);
+                let v = rint(1, 4);
+                for (let i = 0; i < 5; i++) { terms.push(v); v = m * v + k; }
+                nextVal = v;
+            } else if (pattern === 'fib') {
+                // Fibonacci-like: each term = sum of previous two
+                let a1 = rint(1, 4), a2 = rint(1, 6);
+                terms.push(a1, a2);
+                for (let i = 0; i < 3; i++) {
+                    const n = a1 + a2;
+                    terms.push(n);
+                    a1 = a2; a2 = n;
+                }
+                nextVal = a1 + a2;
+            } else if (pattern === 'altop') {
+                // Alternating ops: ×m then +k (e.g. 2, 4, 7, 14, 17, 34, ?)
+                const m = pick([2, 3]);
+                const k = pick([1, 2, 3, 4, 5]);
+                let v = rint(1, 5);
+                terms.push(v);
+                for (let i = 0; i < 5; i++) {
+                    v = (i % 2 === 0) ? v * m : v + k;
+                    terms.push(v);
+                }
+                nextVal = terms.pop(); // last computed becomes the answer
+            } else if (pattern === 'primes') {
+                const primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47];
+                const startIdx = rint(0, primes.length - 7);
+                for (let i = 0; i < 5; i++) terms.push(primes[startIdx + i]);
+                nextVal = primes[startIdx + 5];
+            }
+
+            const problemStr = terms.join(', ') + ', ?';
+            return { op: 'q', a: 0, b: 0, answer: nextVal, problem: problemStr };
         }
 
         const problem = `${a} ${displayOp(op)} ${b}`;
@@ -389,7 +480,7 @@
         return {
             '+': '+', '-': '−', '*': '×', '/': '÷',
             '%': '%', 'f': 'frac', 's': 'x²/√', 'c': 'conv',
-            '^': 'aᵇ', 'e': '=?',
+            '^': 'aᵇ', 'e': '=?', 'q': '…',
         }[op] || op;
     }
 
@@ -847,6 +938,13 @@
             candidates.push(
                 correct + 1, correct - 1, correct * 2, correct / 2,
                 p.a, p.b, Math.round(p.a + p.b), Math.abs(p.a - p.b),
+            );
+        } else if (p.op === 'q') {
+            // Sequences: off-by-one in the pattern, wrong step direction, last term repeated
+            const mag = Math.max(1, Math.round(Math.abs(correct) * 0.1));
+            candidates.push(
+                correct + 1, correct - 1, correct + mag, correct - mag,
+                Math.round(correct * 1.5), Math.round(correct / 2),
             );
         }
         // Generic perturbations
@@ -1324,7 +1422,7 @@
             const labelMap = {
                 '+': 'Addition', '-': 'Subtraction', '*': 'Multiplication', '/': 'Division',
                 '%': 'Percentages', 'f': 'Fractions', 's': 'Squares & roots', 'c': 'Conversions',
-                '^': 'Compare powers', 'e': 'Solve for ?',
+                '^': 'Compare powers', 'e': 'Solve for ?', 'q': 'Sequences',
             };
             s.by_op.forEach(row => {
                 const acc = row.accuracy != null ? `${(row.accuracy * 100).toFixed(0)}%` : '—';

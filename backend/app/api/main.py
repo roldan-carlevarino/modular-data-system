@@ -283,6 +283,24 @@ def _run_migrations():
             ADD COLUMN IF NOT EXISTS name TEXT
         """)
 
+        # Project attachments: spreadsheets / excels attached to a project
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS project_attachment (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL DEFAULT 'excel',
+                name TEXT NOT NULL DEFAULT 'Untitled',
+                data JSONB NOT NULL DEFAULT '{}'::jsonb,
+                position INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS project_attachment_project_idx
+                ON project_attachment(project_id);
+        """)
+
         conn.commit()
         cur.close()
         conn.close()

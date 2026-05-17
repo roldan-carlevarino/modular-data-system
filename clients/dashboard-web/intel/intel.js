@@ -594,6 +594,99 @@ function wrapMermaidCode(code) {
     return '```mermaid\n' + code.trim() + '\n```';
 }
 
+// ── Excel-like spreadsheets (x-spreadsheet) ────────────────────
+// Stored inline as ```excel <json> ``` blocks. JSON shape is the
+// native x-spreadsheet format: either a single sheet object or an
+// array of sheets. Supports formulas (=SUM, =A1+B2, =AVERAGE…),
+// multiple sheets, cell formatting.
+const DEFAULT_EXCEL_DATA = {
+    name: 'Sheet1',
+    rows: {
+        len: 50,
+        0: { cells: { 0: { text: 'Item' }, 1: { text: 'Qty' }, 2: { text: 'Price' }, 3: { text: 'Total' } } },
+        1: { cells: { 0: { text: 'A' }, 1: { text: '2' }, 2: { text: '10' }, 3: { text: '=B2*C2' } } },
+        2: { cells: { 0: { text: 'B' }, 1: { text: '3' }, 2: { text: '5' }, 3: { text: '=B3*C3' } } },
+        3: { cells: { 0: { text: 'Total' }, 3: { text: '=SUM(D2:D3)' } } },
+    },
+    cols: { len: 10 },
+};
+
+function extractExcelJson(text) {
+    if (!text) return null;
+    const m = text.match(/^\s*```excel\s*\n([\s\S]*?)\n\s*```\s*$/);
+    if (!m) return null;
+    try { return JSON.parse(m[1]); } catch { return null; }
+}
+
+function wrapExcelData(data) {
+    return '```excel\n' + JSON.stringify(data, null, 2) + '\n```';
+}
+
+function buildExcelEditor() {
+    return `
+    <div class="excel-editor">
+        <div class="excel-toolbar">
+            <span class="excel-toolbar-label">Excel sheet</span>
+            <span class="excel-toolbar-hint">Formulas: <code>=SUM(A1:A5)</code> · <code>=A1+B2</code> · <code>=AVERAGE(B:B)</code> · right-click for format · bottom tabs for multi-sheet</span>
+        </div>
+        <div class="excel-host"></div>
+    </div>`;
+}
+
+function initExcelEditor(container, initialData) {
+    const host = container.querySelector('.excel-host');
+    if (!host) return null;
+    if (typeof x_spreadsheet === 'undefined') {
+        host.innerHTML = '<p class="diagram-error">⚠ x-spreadsheet not loaded</p>';
+        return null;
+    }
+    const xs = x_spreadsheet(host, {
+        mode: 'edit',
+        showToolbar: true,
+        showGrid: true,
+        showContextmenu: true,
+        showBottomBar: true,
+        view: { height: () => 460, width: () => host.clientWidth || 800 },
+        row: { len: 50, height: 25 },
+        col: { len: 26, width: 100, indexWidth: 60, minWidth: 60 },
+    }).loadData(initialData || DEFAULT_EXCEL_DATA);
+    host._xs = xs;
+    setTimeout(() => { try { xs.reRender(); } catch (e) {} }, 50);
+    return xs;
+}
+
+function getExcelData(container) {
+    const host = container.querySelector('.excel-host');
+    if (!host || !host._xs) return null;
+    try { return host._xs.getData(); } catch (e) { return null; }
+}
+
+function renderExcels(container) {
+    if (typeof x_spreadsheet === 'undefined') return;
+    container.querySelectorAll('.excel-render:not(.excel-rendered)').forEach(div => {
+        try {
+            const json = div.dataset.excelJson;
+            const data = JSON.parse(json);
+            div.innerHTML = '';
+            const xs = x_spreadsheet(div, {
+                mode: 'read',
+                showToolbar: false,
+                showGrid: true,
+                showContextmenu: false,
+                showBottomBar: Array.isArray(data) && data.length > 1,
+                view: { height: () => 360, width: () => div.clientWidth || 800 },
+                row: { len: 50, height: 25 },
+                col: { len: 26, width: 100, indexWidth: 60, minWidth: 60 },
+            }).loadData(data);
+            div.classList.add('excel-rendered');
+            setTimeout(() => { try { xs.reRender(); } catch (e) {} }, 50);
+        } catch (e) {
+            div.innerHTML = `<pre class="diagram-error">⚠ Excel error: ${e.message}</pre>`;
+        }
+    });
+}
+// ───────────────────────────────────────────────────────────────
+
 async function renderMermaidPreview(code, container) {
     container.innerHTML = '';
     if (!code.trim()) {
@@ -1216,6 +1309,14 @@ function contentToHtml(text) {
     return chartPH(chartChunks.length - 1);
   });
 
+  // 0c. Protect ```excel blocks before markdown parsing
+  const excelChunks = [];
+  const excelPH = (i) => `EXCELPLACEHOLDER${i}ENDEXCEL`;
+  text = text.replace(/```excel\n([\s\S]*?)\n```/g, (_, json) => {
+    excelChunks.push(json);
+    return excelPH(excelChunks.length - 1);
+  });
+
   // 1. Extract and protect math blocks before markdown parsing
   const mathChunks = [];
   const placeholder = (i) => `MATHPLACEHOLDER${i}ENDMATH`;
@@ -1275,6 +1376,15 @@ function contentToHtml(text) {
     const safe = json.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const div = `<div class="chart-render" data-chart-json="${safe}"></div>`;
     const ph = chartPH(i);
+    html = html.replace(`<p>${ph}</p>`, div);
+    html = html.replace(ph, div);
+  });
+
+  // 4b. Restore excel blocks as placeholder divs (rendered later by renderExcels)
+  excelChunks.forEach((json, i) => {
+    const safe = json.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const div = `<div class="excel-render" data-excel-json="${safe}"></div>`;
+    const ph = excelPH(i);
     html = html.replace(`<p>${ph}</p>`, div);
     html = html.replace(ph, div);
   });
@@ -1358,6 +1468,9 @@ async function renderKnowledge(blocks) {
 
   // Render Plotly charts in view mode
   renderCharts(viewer);
+
+  // Render Excel-like spreadsheets in view mode
+  renderExcels(viewer);
 
   if (isModifyingContents) {
     document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -1606,6 +1719,12 @@ async function handleEditClick(event) {
             const codeArea = diagramContainer.querySelector('.diagram-code');
             textarea.value = wrapMermaidCode(codeArea.value);
         }
+        // If Excel is active, sync its data back to the textarea
+        const excelContainer = contentDiv.querySelector('.excel-container');
+        if (excelContainer) {
+            const data = getExcelData(excelContainer);
+            if (data) textarea.value = wrapExcelData(data);
+        }
         const _noteEls = contentDiv.querySelectorAll('.postit-note-editor');
         const newContent = buildNotesContent(Array.from(_noteEls).map(el => el.value), textarea.value);
         const typeSelect = contentDiv.querySelector('.block-type-editor');
@@ -1683,6 +1802,9 @@ async function handleEditClick(event) {
 
             // Render Plotly charts after save
             renderCharts(contentDiv);
+
+            // Render Excel sheets after save
+            renderExcels(contentDiv);
             
         } catch (error) {
             console.error('Error updating block:', error);
@@ -1717,6 +1839,7 @@ async function handleEditClick(event) {
             </label>
             <button type="button" class="btn-toggle-spreadsheet" title="Toggle spreadsheet view">📊 Spreadsheet</button>
             <button type="button" class="btn-toggle-diagram" title="Toggle diagram editor">🔀 Diagram</button>
+            <button type="button" class="btn-toggle-excel" title="Toggle Excel sheet (formulas, multi-sheet)">📑 Excel</button>
             <button type="button" class="btn-insert-chart" title="Insert Plotly chart template">📈 Chart</button>
             <span class="upload-status"></span>
           </div>
@@ -1889,6 +2012,61 @@ async function handleEditClick(event) {
                 container.remove();
                 diagramBtn.textContent = 'Diagram';
                 diagramActive = false;
+            }
+        });
+
+        // Toggle Excel sheet handler
+        const excelBtn = contentDiv.querySelector('.btn-toggle-excel');
+        let excelActive = false;
+        excelBtn.addEventListener('click', () => {
+            const textarea = contentDiv.querySelector('textarea');
+
+            if (!excelActive) {
+                // Close spreadsheet/diagram panels if open
+                if (spreadsheetActive) {
+                    const grid = contentDiv.querySelector('.spreadsheet-container');
+                    if (grid) {
+                        textarea.value = spreadsheetToText(grid.querySelector('table'));
+                        grid.remove();
+                    }
+                    textarea.style.display = '';
+                    spreadsheetBtn.textContent = 'Spreadsheet';
+                    spreadsheetActive = false;
+                }
+                if (diagramActive) {
+                    const dc = contentDiv.querySelector('.diagram-container');
+                    if (dc) {
+                        const codeArea = dc.querySelector('.diagram-code');
+                        if (codeArea) textarea.value = wrapMermaidCode(codeArea.value);
+                        dc.remove();
+                    }
+                    textarea.style.display = '';
+                    diagramBtn.textContent = 'Diagram';
+                    diagramActive = false;
+                }
+
+                const existing = extractExcelJson(textarea.value.trim());
+                textarea.style.display = 'none';
+
+                const container = document.createElement('div');
+                container.className = 'excel-container';
+                container.innerHTML = buildExcelEditor();
+                textarea.parentNode.insertBefore(container, textarea.nextSibling);
+
+                initExcelEditor(container, existing || DEFAULT_EXCEL_DATA);
+                excelBtn.textContent = 'Textarea';
+                excelActive = true;
+            } else {
+                // Sync excel data back to textarea
+                const container = contentDiv.querySelector('.excel-container');
+                const data = getExcelData(container);
+                if (data) textarea.value = wrapExcelData(data);
+                textarea.style.display = '';
+                textarea.style.height = 'auto';
+                textarea.style.height = textarea.scrollHeight + 'px';
+                container.remove();
+                excelBtn.textContent = 'Excel';
+                excelActive = false;
             }
         });
 

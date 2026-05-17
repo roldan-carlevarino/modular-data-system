@@ -20,6 +20,7 @@
         negatives: false,
         tolerance: 'strict', // 'strict' | 'pct5' | 'pct10'
         input: 'type',       // 'type' | 'mc'
+        raceTarget: 50,      // only used when mode === 'race'
     };
     const STORAGE_KEY = 'math.config.v1';
 
@@ -33,10 +34,11 @@
                 numtype: c.numtype || DEFAULTS.numtype,
                 range: c.range || DEFAULTS.range,
                 duration: parseInt(c.duration, 10) || DEFAULTS.duration,
-                mode: c.mode === 'weakness' ? 'weakness' : 'normal',
+                mode: ['normal','weakness','drill','race'].includes(c.mode) ? c.mode : 'normal',
                 negatives: !!c.negatives,
                 tolerance: ['strict', 'pct5', 'pct10'].includes(c.tolerance) ? c.tolerance : 'strict',
                 input: c.input === 'mc' ? 'mc' : 'type',
+                raceTarget: parseInt(c.raceTarget, 10) || DEFAULTS.raceTarget,
             };
         } catch (e) {
             return { ...DEFAULTS };
@@ -95,8 +97,8 @@
                 if (isToggle) {
                     config[key] = !config[key];
                 } else if (isSingle) {
-                    // Numeric for duration, string for the rest
-                    config[key] = (key === 'duration') ? parseInt(v, 10) : v;
+                    // Numeric for duration / raceTarget, string for the rest
+                    config[key] = (key === 'duration' || key === 'raceTarget') ? parseInt(v, 10) : v;
                 } else {
                     const arr = Array.isArray(config[key]) ? [...config[key]] : [];
                     const idx = arr.indexOf(v);
@@ -107,8 +109,14 @@
                 saveConfig(config);
                 paintChips();
                 if (key === 'mode' || key === 'ops') loadWeakPreview();
+                if (key === 'mode') updateRaceTargetVisibility();
             });
         });
+    }
+
+    function updateRaceTargetVisibility() {
+        const grp = document.getElementById('mathRaceTargetGroup');
+        if (grp) grp.hidden = (config.mode !== 'race');
     }
 
     // ---------- Problem generator ----------
@@ -383,32 +391,49 @@
             // Number sequences — quant-test style. Show 4–5 terms, ask for the next.
             // Pattern bank scales with difficulty.
             const patterns = (cfg.range === 'easy')
-                ? ['arith', 'geo', 'square']
+                ? ['arith', 'geo', 'square', 'triangular', 'altsign', 'doubling',
+                   'multipleOf', 'plusN']
                 : (cfg.range === 'medium')
-                    ? ['arith', 'geo', 'square', 'altdiff', 'incdiff', 'recur']
-                    : ['arith', 'geo', 'square', 'cube', 'altdiff', 'incdiff', 'recur', 'fib', 'altop', 'primes'];
+                    ? ['arith', 'geo', 'square', 'altdiff', 'incdiff', 'recur',
+                       'triangular', 'altsign', 'doubling', 'decdiff', 'polyN2N',
+                       'powers2plus', 'interleave', 'consecprod',
+                       'multipleOf', 'oddOnly', 'plusMinus', 'skipPrime',
+                       'sumDigits', 'powerMinusN', 'mulPlusIdx']
+                    : ['arith', 'geo', 'square', 'cube', 'altdiff', 'incdiff', 'recur',
+                       'fib', 'altop', 'primes', 'triangular', 'altsign', 'doubling',
+                       'decdiff', 'polyN2N', 'powers2plus', 'interleave', 'consecprod',
+                       'geoFrac', 'lucas', 'factorial', 'sumPrev3',
+                       'oddOnly', 'plusMinus', 'skipPrime', 'sumDigits',
+                       'powerMinusN', 'mulPlusIdx', 'cumulative', 'pellLike',
+                       'centeredSquare', 'squarePlusN', 'altMul', 'reverseDigits',
+                       'collatzLike'];
             const pattern = pick(patterns);
             const terms = [];
             let nextVal = null;
+            let explain = '';
 
             if (pattern === 'arith') {
                 const start = rint(1, 20);
                 const d = pick([2, 3, 4, 5, 6, 7, -2, -3, -4]);
                 for (let i = 0; i < 5; i++) terms.push(start + i * d);
                 nextVal = start + 5 * d;
+                explain = `Arithmetic: each term ${d >= 0 ? '+' : '−'}${Math.abs(d)} (last ${terms[terms.length-1]} ${d >= 0 ? '+' : '−'} ${Math.abs(d)} = ${nextVal})`;
             } else if (pattern === 'geo') {
                 const start = rint(1, 5);
                 const r = pick([2, 3, cfg.range === 'easy' ? 2 : 4]);
                 let v = start;
                 for (let i = 0; i < 5; i++) { terms.push(v); v *= r; }
                 nextVal = start * Math.pow(r, 5);
+                explain = `Geometric: each term ×${r} (last ${terms[terms.length-1]} × ${r} = ${nextVal})`;
             } else if (pattern === 'square') {
                 const offset = rint(0, 3);
                 for (let i = 1; i <= 5; i++) terms.push((i + offset) * (i + offset));
                 nextVal = (6 + offset) * (6 + offset);
+                explain = `Squares: n² starting at ${1 + offset}² (next is ${6 + offset}² = ${nextVal})`;
             } else if (pattern === 'cube') {
                 for (let i = 1; i <= 5; i++) terms.push(i * i * i);
                 nextVal = 6 * 6 * 6;
+                explain = `Cubes: n³ (next is 6³ = ${nextVal})`;
             } else if (pattern === 'altdiff') {
                 // Differences alternate between d1 and d2 (e.g. +3,+5,+3,+5,...)
                 const start = rint(1, 15);
@@ -420,7 +445,9 @@
                     v += (i % 2 === 0) ? d1 : d2;
                     terms.push(v);
                 }
-                nextVal = v + ((4 % 2 === 0) ? d1 : d2);
+                const nextStep = (4 % 2 === 0) ? d1 : d2;
+                nextVal = v + nextStep;
+                explain = `Alternating differences: +${d1}, +${d2}, +${d1}, +${d2}, … (last ${v} + ${nextStep} = ${nextVal})`;
             } else if (pattern === 'incdiff') {
                 // Differences grow by a constant (e.g. +1,+2,+3,+4 → 1,2,4,7,11)
                 const start = rint(1, 5);
@@ -432,7 +459,9 @@
                     v += dStart + i * dStep;
                     terms.push(v);
                 }
-                nextVal = v + dStart + 4 * dStep;
+                const nextStep = dStart + 4 * dStep;
+                nextVal = v + nextStep;
+                explain = `Increasing differences: +${dStart}, +${dStart + dStep}, +${dStart + 2*dStep}, … (each step grows by ${dStep}; next step +${nextStep} → ${nextVal})`;
             } else if (pattern === 'recur') {
                 // x[n] = m * x[n-1] + k  (e.g. ×2+1 → 1,3,7,15,31,63)
                 const m = pick([2, 2, 3]);
@@ -440,6 +469,8 @@
                 let v = rint(1, 4);
                 for (let i = 0; i < 5; i++) { terms.push(v); v = m * v + k; }
                 nextVal = v;
+                const ksign = k >= 0 ? `+ ${k}` : `− ${Math.abs(k)}`;
+                explain = `Recurrence: xₙ = ${m}·xₙ₋₁ ${ksign} (${m} × ${terms[terms.length-1]} ${ksign} = ${nextVal})`;
             } else if (pattern === 'fib') {
                 // Fibonacci-like: each term = sum of previous two
                 let a1 = rint(1, 4), a2 = rint(1, 6);
@@ -450,6 +481,7 @@
                     a1 = a2; a2 = n;
                 }
                 nextVal = a1 + a2;
+                explain = `Fibonacci-like: each term = sum of the two before (${terms[terms.length-2]} + ${terms[terms.length-1]} = ${nextVal})`;
             } else if (pattern === 'altop') {
                 // Alternating ops: ×m then +k (e.g. 2, 4, 7, 14, 17, 34, ?)
                 const m = pick([2, 3]);
@@ -461,15 +493,624 @@
                     terms.push(v);
                 }
                 nextVal = terms.pop(); // last computed becomes the answer
+                const nextOpIdx = (terms.length - 1) % 2; // matches the loop's `i`
+                const lastShown = terms[terms.length - 1];
+                const opDesc = nextOpIdx === 0 ? `× ${m}` : `+ ${k}`;
+                explain = `Alternating: ×${m}, +${k}, ×${m}, +${k}, … (next: ${lastShown} ${opDesc} = ${nextVal})`;
             } else if (pattern === 'primes') {
                 const primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47];
                 const startIdx = rint(0, primes.length - 7);
                 for (let i = 0; i < 5; i++) terms.push(primes[startIdx + i]);
                 nextVal = primes[startIdx + 5];
+                explain = `Consecutive prime numbers (next prime after ${terms[terms.length-1]} is ${nextVal})`;
+            } else if (pattern === 'triangular') {
+                // Triangular numbers: 1, 3, 6, 10, 15, 21, …  (T_n = n(n+1)/2)
+                const offset = rint(0, 3);
+                for (let i = 1; i <= 5; i++) {
+                    const n = i + offset;
+                    terms.push(n * (n + 1) / 2);
+                }
+                const nn = 6 + offset;
+                nextVal = nn * (nn + 1) / 2;
+                explain = `Triangular numbers: Tₙ = n(n+1)/2 (next T${nn} = ${nn}×${nn+1}/2 = ${nextVal})`;
+            } else if (pattern === 'altsign') {
+                // Same magnitude, alternating sign: 2, -2, 2, -2 OR with growth: 1, -2, 3, -4, 5
+                const variant = pick(['flip', 'growflip']);
+                if (variant === 'flip') {
+                    const mag = rint(2, 12);
+                    for (let i = 0; i < 5; i++) terms.push((i % 2 === 0) ? mag : -mag);
+                    nextVal = -terms[terms.length - 1];
+                    explain = `Alternating sign: ±${mag} flipping each step (next = ${nextVal})`;
+                } else {
+                    for (let i = 1; i <= 5; i++) terms.push((i % 2 === 1) ? i : -i);
+                    nextVal = (6 % 2 === 1) ? 6 : -6;
+                    explain = `Alternating signed integers: 1, −2, 3, −4, 5, … (next = ${nextVal})`;
+                }
+            } else if (pattern === 'doubling') {
+                // Doubling with optional +1 each step: 1, 2, 4, 8, 16 OR 1, 3, 7, 15 (covered by recur)
+                const start = pick([1, 2, 3, 5]);
+                let v = start;
+                for (let i = 0; i < 5; i++) { terms.push(v); v *= 2; }
+                nextVal = start * 32;
+                explain = `Doubling: each term ×2 (last ${terms[terms.length-1]} × 2 = ${nextVal})`;
+            } else if (pattern === 'decdiff') {
+                // Differences DECREASE by a constant (e.g. +9, +7, +5, +3 → 1, 10, 17, 22, 25, 26)
+                const start = rint(1, 5);
+                const dStart = rint(5, 10);
+                const dStep = pick([1, 2]);
+                let v = start;
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v += dStart - i * dStep;
+                    terms.push(v);
+                }
+                const nextStep = dStart - 4 * dStep;
+                nextVal = v + nextStep;
+                const sign = nextStep >= 0 ? '+' : '−';
+                explain = `Decreasing differences: +${dStart}, +${dStart - dStep}, +${dStart - 2*dStep}, … (each step shrinks by ${dStep}; next step ${sign}${Math.abs(nextStep)} → ${nextVal})`;
+            } else if (pattern === 'polyN2N') {
+                // n² + n  →  2, 6, 12, 20, 30, 42, …
+                const offset = rint(0, 2);
+                for (let i = 1; i <= 5; i++) {
+                    const n = i + offset;
+                    terms.push(n * n + n);
+                }
+                const nn = 6 + offset;
+                nextVal = nn * nn + nn;
+                explain = `Polynomial n² + n (next ${nn}² + ${nn} = ${nextVal})`;
+            } else if (pattern === 'powers2plus') {
+                // 2^n + k  (e.g. 3, 5, 9, 17, 33 with k=1 → 2^1+1, 2^2+1, …)
+                const k = pick([-1, 1, 2, 3]);
+                for (let i = 1; i <= 5; i++) terms.push(Math.pow(2, i) + k);
+                nextVal = Math.pow(2, 6) + k;
+                const ksign = k >= 0 ? `+ ${k}` : `− ${Math.abs(k)}`;
+                explain = `Power of 2 ${ksign}: 2ⁿ ${ksign} (next 2⁶ ${ksign} = ${nextVal})`;
+            } else if (pattern === 'interleave') {
+                // Two interleaved arithmetic progressions (e.g. 1, 10, 2, 20, 3, 30, ?)
+                const a0 = rint(1, 5), aStep = rint(1, 4);
+                const b0 = rint(8, 20), bStep = rint(2, 8);
+                terms.push(a0, b0, a0 + aStep, b0 + bStep, a0 + 2 * aStep, b0 + 2 * bStep);
+                // 6 terms shown; next belongs to the A series (position 7 = A4)
+                nextVal = a0 + 3 * aStep;
+                explain = `Two interleaved series: A (${a0}, ${a0+aStep}, ${a0+2*aStep}, … step +${aStep}) and B (${b0}, ${b0+bStep}, ${b0+2*bStep}, … step +${bStep}). Next is from A → ${nextVal}`;
+            } else if (pattern === 'consecprod') {
+                // n × (n+1):  2, 6, 12, 20, 30, 42 — same as polyN2N actually,
+                // so phrase it differently: products of consecutive integers shifted
+                const offset = rint(1, 3);
+                for (let i = 0; i < 5; i++) {
+                    const n = i + offset;
+                    terms.push(n * (n + 2));
+                }
+                const nn = 5 + offset;
+                nextVal = nn * (nn + 2);
+                explain = `n × (n+2): ${offset}×${offset+2}, ${offset+1}×${offset+3}, … (next ${nn}×${nn+2} = ${nextVal})`;
+            } else if (pattern === 'geoFrac') {
+                // Halving / thirding: 64, 32, 16, 8, 4 → 2  (kept integer)
+                const r = pick([2, 3]);
+                const exp = pick([4, 5, 6]);
+                const start = Math.pow(r, exp);
+                let v = start;
+                for (let i = 0; i < 5; i++) { terms.push(v); v = v / r; }
+                nextVal = start / Math.pow(r, 5);
+                // Ensure integer answers only
+                if (!Number.isInteger(nextVal)) {
+                    nextVal = Math.round(nextVal * 100) / 100;
+                }
+                explain = `Geometric: each term ÷${r} (last ${terms[terms.length-1]} ÷ ${r} = ${nextVal})`;
+            } else if (pattern === 'lucas') {
+                // Lucas-like: a + b but starting from different seeds; reveals Fibonacci-style logic
+                let a1 = pick([2, 3, 4]), a2 = pick([1, 3, 5, 7]);
+                terms.push(a1, a2);
+                for (let i = 0; i < 3; i++) {
+                    const n = a1 + a2;
+                    terms.push(n);
+                    a1 = a2; a2 = n;
+                }
+                nextVal = a1 + a2;
+                explain = `Each term = sum of the two before it (${terms[terms.length-2]} + ${terms[terms.length-1]} = ${nextVal})`;
+            } else if (pattern === 'factorial') {
+                // 1, 2, 6, 24, 120  → 720
+                const facts = [1, 2, 6, 24, 120, 720, 5040];
+                for (let i = 0; i < 5; i++) terms.push(facts[i]);
+                nextVal = facts[5];
+                explain = `Factorials: n! → 1!, 2!, 3!, 4!, 5!, … (next 6! = ${nextVal})`;
+            } else if (pattern === 'sumPrev3') {
+                // Tribonacci-like: each term = sum of previous THREE
+                let t1 = rint(1, 3), t2 = rint(1, 4), t3 = rint(1, 5);
+                terms.push(t1, t2, t3);
+                for (let i = 0; i < 2; i++) {
+                    const n = t1 + t2 + t3;
+                    terms.push(n);
+                    t1 = t2; t2 = t3; t3 = n;
+                }
+                nextVal = t1 + t2 + t3;
+                explain = `Each term = sum of the previous three (${terms[terms.length-3]} + ${terms[terms.length-2]} + ${terms[terms.length-1]} = ${nextVal})`;
+            } else if (pattern === 'multipleOf') {
+                // Multiples of k (e.g. 7, 14, 21, 28, 35, ?)
+                const k = pick([3, 4, 6, 7, 8, 9, 11, 12]);
+                const start = rint(1, 4);
+                for (let i = 0; i < 5; i++) terms.push((start + i) * k);
+                nextVal = (start + 5) * k;
+                explain = `Multiples of ${k}: ${start}×${k}, ${start+1}×${k}, … (next ${start+5}×${k} = ${nextVal})`;
+            } else if (pattern === 'plusN') {
+                // Same as arithmetic but always +n where step = position index
+                // (e.g. +2, +2, +2 — basically arith; here we keep it simple positive)
+                const start = rint(1, 10);
+                const d = pick([2, 3, 5, 6, 7, 8, 9]);
+                for (let i = 0; i < 5; i++) terms.push(start + i * d);
+                nextVal = start + 5 * d;
+                explain = `Each term + ${d} (last ${terms[terms.length-1]} + ${d} = ${nextVal})`;
+            } else if (pattern === 'oddOnly') {
+                // Sequence of odd numbers, possibly skipping (e.g. 1, 3, 5, 7, 9 or 3, 7, 11, 15)
+                const start = pick([1, 3, 5, 7]);
+                const step = pick([2, 4]);
+                for (let i = 0; i < 5; i++) terms.push(start + i * step);
+                nextVal = start + 5 * step;
+                explain = step === 2
+                    ? `Consecutive odd numbers (next = ${nextVal})`
+                    : `Every other odd number: +${step} each step (next = ${nextVal})`;
+            } else if (pattern === 'plusMinus') {
+                // +a, −b, +a, −b alternating (e.g. 10, 13, 11, 14, 12, 15, ?)
+                const start = rint(5, 15);
+                const a = rint(2, 5);
+                const b = rint(1, a - 1 > 0 ? a - 1 : 1);
+                let v = start;
+                terms.push(v);
+                for (let i = 0; i < 5; i++) {
+                    v = (i % 2 === 0) ? v + a : v - b;
+                    terms.push(v);
+                }
+                nextVal = terms.pop();
+                const nextOp = (terms.length - 1) % 2 === 0 ? `+${a}` : `−${b}`;
+                explain = `Alternating: +${a}, −${b}, +${a}, −${b}, … (next ${nextOp} → ${nextVal})`;
+            } else if (pattern === 'skipPrime') {
+                // Skip-one primes (2, 5, 11, 17, 23, …) or every-other prime
+                const primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59];
+                const startIdx = rint(0, 6);
+                for (let i = 0; i < 5; i++) terms.push(primes[startIdx + 2 * i]);
+                nextVal = primes[startIdx + 10];
+                explain = `Every other prime number (next = ${nextVal})`;
+            } else if (pattern === 'sumDigits') {
+                // Each term = previous term + sum of its digits (e.g. 1, 2, 4, 8, 16, 23, 28, …)
+                const sumDig = (x) => String(Math.abs(x)).split('').reduce((s, c) => s + (+c || 0), 0);
+                let v = rint(1, 8);
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v = v + sumDig(v);
+                    terms.push(v);
+                }
+                nextVal = v + sumDig(v);
+                explain = `Each term = previous + sum of its digits (${terms[terms.length-1]} + ${sumDig(terms[terms.length-1])} = ${nextVal})`;
+            } else if (pattern === 'powerMinusN') {
+                // 2^n − n: 1, 2, 5, 12, 27, 58, …
+                for (let i = 1; i <= 5; i++) terms.push(Math.pow(2, i) - i);
+                nextVal = Math.pow(2, 6) - 6;
+                explain = `2ⁿ − n (next 2⁶ − 6 = ${nextVal})`;
+            } else if (pattern === 'mulPlusIdx') {
+                // x[n] = 2 * x[n-1] + n  (e.g. 1, 4, 11, 26, 57, 120)
+                const m = pick([2, 2, 3]);
+                let v = rint(1, 3);
+                terms.push(v);
+                for (let i = 1; i <= 4; i++) {
+                    v = m * v + i;
+                    terms.push(v);
+                }
+                nextVal = m * v + 5;
+                explain = `xₙ = ${m}·xₙ₋₁ + n (${m}×${terms[terms.length-1]} + 5 = ${nextVal})`;
+            } else if (pattern === 'cumulative') {
+                // Cumulative sums: a[n] = a[n-1] + n (so 1, 2, 4, 7, 11, 16 — same as incdiff variant)
+                // Phrase differently: running sum of integers starting from k
+                const k = rint(0, 3);
+                let v = k;
+                terms.push(v);
+                for (let i = 1; i <= 4; i++) {
+                    v += i;
+                    terms.push(v);
+                }
+                nextVal = v + 5;
+                explain = `Running sum: add 1, then 2, then 3, … (last ${terms[terms.length-1]} + 5 = ${nextVal})`;
+            } else if (pattern === 'pellLike') {
+                // Pell numbers: x[n] = 2*x[n-1] + x[n-2]  (0, 1, 2, 5, 12, 29, 70, …)
+                let a1 = pick([0, 1, 1]);
+                let a2 = a1 === 0 ? 1 : pick([2, 3]);
+                terms.push(a1, a2);
+                for (let i = 0; i < 3; i++) {
+                    const n = 2 * a2 + a1;
+                    terms.push(n);
+                    a1 = a2; a2 = n;
+                }
+                nextVal = 2 * a2 + a1;
+                explain = `Pell-like: xₙ = 2·xₙ₋₁ + xₙ₋₂ (2×${a2} + ${a1} = ${nextVal})`;
+            } else if (pattern === 'centeredSquare') {
+                // Centered square numbers: 1, 5, 13, 25, 41, 61, …  (2n² + 2n + 1)
+                for (let i = 0; i < 5; i++) {
+                    terms.push(2 * i * i + 2 * i + 1);
+                }
+                nextVal = 2 * 25 + 2 * 5 + 1;
+                explain = `Centered squares: 2n² + 2n + 1 (next 2·25 + 2·5 + 1 = ${nextVal})`;
+            } else if (pattern === 'squarePlusN') {
+                // n² + c (e.g. 2, 5, 10, 17, 26, 37)
+                const c = pick([1, 2, 3, 5]);
+                for (let i = 1; i <= 5; i++) terms.push(i * i + c);
+                nextVal = 36 + c;
+                explain = `n² + ${c} (next 6² + ${c} = ${nextVal})`;
+            } else if (pattern === 'altMul') {
+                // Multiply by alternating factors (×2 then ×3 then ×2 then ×3…)
+                const m1 = pick([2, 2, 3]);
+                const m2 = pick([3, 4, 5]);
+                let v = rint(1, 3);
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v = (i % 2 === 0) ? v * m1 : v * m2;
+                    terms.push(v);
+                }
+                const nextFactor = (4 % 2 === 0) ? m1 : m2;
+                nextVal = v * nextFactor;
+                explain = `Alternating multipliers: ×${m1}, ×${m2}, ×${m1}, ×${m2}, … (next ${terms[terms.length-1]} × ${nextFactor} = ${nextVal})`;
+            } else if (pattern === 'reverseDigits') {
+                // Reverse-digit pairs (12, 21, 23, 32, 34, 43, ?)
+                // Pattern: each pair is (10a + b, 10b + a) with a, b consecutive
+                const start = rint(1, 5);
+                for (let i = 0; i < 3; i++) {
+                    const a = start + i;
+                    const b = start + i + 1;
+                    terms.push(10 * a + b);
+                    terms.push(10 * b + a);
+                }
+                // Already 6 terms; next would start a new pair
+                const a = start + 3;
+                const b = start + 4;
+                nextVal = 10 * a + b;
+                explain = `Pairs of reversed digits: ${start}${start+1}/${start+1}${start}, ${start+1}${start+2}/${start+2}${start+1}, … (next ${a}${b} = ${nextVal})`;
+            } else if (pattern === 'collatzLike') {
+                // Simplified Collatz: if even ÷2, if odd ×3+1, repeat
+                // Pick a start with a nice short trajectory
+                const starts = [6, 7, 9, 10, 11, 13, 14, 15];
+                let v = pick(starts);
+                terms.push(v);
+                for (let i = 0; i < 4; i++) {
+                    v = (v % 2 === 0) ? v / 2 : 3 * v + 1;
+                    terms.push(v);
+                }
+                const last = terms[terms.length - 1];
+                nextVal = (last % 2 === 0) ? last / 2 : 3 * last + 1;
+                explain = `Collatz: even → ÷2, odd → ×3+1 (last ${last} is ${last % 2 === 0 ? 'even → ÷2' : 'odd → ×3+1'} = ${nextVal})`;
             }
 
             const problemStr = terms.join(', ') + ', ?';
-            return { op: 'q', a: 0, b: 0, answer: nextVal, problem: problemStr };
+            return { op: 'q', a: 0, b: 0, answer: nextVal, problem: problemStr, explain };
+        } else if (op === 'p') {
+            // Probability / Expected Value — quant interview staples
+            // Patterns: intersection (independent), coin flips C(n,k)/2^n, dice EV, Bayes
+            const patterns = (cfg.range === 'easy')
+                ? ['intersect', 'union', 'coin']
+                : (cfg.range === 'medium')
+                    ? ['intersect', 'union', 'coin', 'diceEV', 'cond']
+                    : ['intersect', 'union', 'coin', 'diceEV', 'cond', 'bayes', 'atLeast'];
+            const pat = pick(patterns);
+            let problem, ans, explain;
+            if (pat === 'intersect') {
+                // P(A ∩ B), independent
+                const pa = pick([0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.75]);
+                const pb = pick([0.1, 0.2, 0.25, 0.4, 0.5, 0.5, 0.8]);
+                ans = Math.round(pa * pb * 1000) / 1000;
+                problem = `A,B independent. P(A)=${pa}, P(B)=${pb}. P(A∩B) = ?`;
+                explain = `Independent ⇒ P(A∩B) = P(A)·P(B) = ${pa}×${pb} = ${ans}`;
+            } else if (pat === 'union') {
+                // P(A ∪ B) for mutually exclusive (easy) or independent (med/hard)
+                const pa = pick([0.1, 0.2, 0.25, 0.3, 0.4]);
+                const pb = pick([0.1, 0.2, 0.3, 0.4, 0.5]);
+                if (cfg.range === 'easy') {
+                    // Mutually exclusive
+                    ans = Math.round((pa + pb) * 1000) / 1000;
+                    problem = `A,B mutually exclusive. P(A)=${pa}, P(B)=${pb}. P(A∪B) = ?`;
+                    explain = `Mutually exclusive ⇒ P(A∪B) = P(A)+P(B) = ${ans}`;
+                } else {
+                    ans = Math.round((pa + pb - pa * pb) * 1000) / 1000;
+                    problem = `A,B independent. P(A)=${pa}, P(B)=${pb}. P(A∪B) = ?`;
+                    explain = `Independent ⇒ P(A∪B) = P(A)+P(B)−P(A)·P(B) = ${pa}+${pb}−${Math.round(pa*pb*1000)/1000} = ${ans}`;
+                }
+            } else if (pat === 'coin') {
+                // P(exactly k heads in n fair flips) = C(n,k)/2^n
+                const n = (cfg.range === 'easy') ? rint(2, 4) : rint(3, 6);
+                const k = rint(0, n);
+                const binom = (n, k) => {
+                    let r = 1;
+                    for (let i = 1; i <= k; i++) r = r * (n - i + 1) / i;
+                    return Math.round(r);
+                };
+                const c = binom(n, k);
+                const denom = Math.pow(2, n);
+                ans = Math.round((c / denom) * 1000) / 1000;
+                problem = `${n} fair coin flips. P(exactly ${k} heads) = ?`;
+                explain = `C(${n},${k})/2^${n} = ${c}/${denom} = ${ans}`;
+            } else if (pat === 'diceEV') {
+                // EV of a die game: win $W if roll ≥ T, lose $L otherwise (fair 6-sided)
+                const T = rint(3, 5);
+                const W = rint(2, 6);
+                const L = rint(1, 4);
+                const pWin = (7 - T) / 6;
+                const pLose = 1 - pWin;
+                ans = Math.round((W * pWin - L * pLose) * 100) / 100;
+                problem = `Roll a fair d6. Win $${W} if roll ≥ ${T}, lose $${L} otherwise. EV = ?`;
+                explain = `EV = ${W}·(${7-T}/6) − ${L}·(${T-1}/6) = ${ans}`;
+            } else if (pat === 'cond') {
+                // Simple conditional from a 2x2 — drawing balls without replacement
+                const r = rint(2, 5);
+                const b = rint(2, 5);
+                const total = r + b;
+                // P(2nd red | 1st red, no replace) = (r-1)/(total-1)
+                ans = Math.round(((r - 1) / (total - 1)) * 1000) / 1000;
+                problem = `Urn: ${r} red, ${b} blue. Draw 2 w/o replacement. P(2nd red | 1st red) = ?`;
+                explain = `After 1 red removed: ${r-1} red of ${total-1} total ⇒ ${ans}`;
+            } else if (pat === 'bayes') {
+                // Classic Bayes: disease P, test sensitivity, FPR
+                const pD = pick([0.01, 0.02, 0.05, 0.1]);
+                const sens = pick([0.9, 0.95, 0.99]);
+                const fpr = pick([0.05, 0.1]);
+                const pPos = sens * pD + fpr * (1 - pD);
+                const post = (sens * pD) / pPos;
+                ans = Math.round(post * 1000) / 1000;
+                problem = `P(D)=${pD}, P(+|D)=${sens}, P(+|¬D)=${fpr}. P(D|+) = ?`;
+                explain = `Bayes: (${sens}·${pD}) / (${sens}·${pD}+${fpr}·${Math.round((1-pD)*100)/100}) = ${ans}`;
+            } else { // atLeast — P(at least 1 success) in n trials
+                const n = rint(2, 5);
+                const p = pick([0.1, 0.2, 0.25, 0.3, 0.5]);
+                ans = Math.round((1 - Math.pow(1 - p, n)) * 1000) / 1000;
+                problem = `n=${n} indep trials, p=${p} each. P(at least 1 success) = ?`;
+                explain = `1 − (1−p)^n = 1 − ${Math.round(Math.pow(1-p, n)*1000)/1000} = ${ans}`;
+            }
+            return { op: 'p', a: 0, b: 0, answer: ans, problem, explain };
+        } else if (op === 'm') {
+            // Modular arithmetic / last-digit cycles
+            const patterns = (cfg.range === 'easy')
+                ? ['mod', 'lastDigit']
+                : (cfg.range === 'medium')
+                    ? ['mod', 'lastDigit', 'sumMod', 'mulMod']
+                    : ['mod', 'lastDigit', 'sumMod', 'mulMod', 'powMod', 'lastDigitBig'];
+            const pat = pick(patterns);
+            let problem, ans, explain;
+            if (pat === 'mod') {
+                const m = pick([3, 4, 5, 6, 7, 8, 9, 11, 12, 13]);
+                const x = rint(50, cfg.range === 'easy' ? 200 : 999);
+                ans = x % m;
+                problem = `${x} mod ${m} = ?`;
+                explain = `${x} = ${Math.floor(x/m)}·${m} + ${ans}`;
+            } else if (pat === 'lastDigit') {
+                // Last digit of a^n for small a, n
+                const a = rint(2, 9);
+                const n = rint(2, 10);
+                const cycles = { 2: [2,4,8,6], 3: [3,9,7,1], 4: [4,6], 5: [5], 6: [6],
+                                 7: [7,9,3,1], 8: [8,4,2,6], 9: [9,1] };
+                const cyc = cycles[a] || [a];
+                ans = cyc[(n - 1) % cyc.length];
+                problem = `Last digit of ${a}^${n} = ?`;
+                explain = `Last-digit cycle of ${a}: [${cyc.join(',')}], position (${n}−1) mod ${cyc.length} = ${(n-1)%cyc.length} ⇒ ${ans}`;
+            } else if (pat === 'sumMod') {
+                const m = pick([7, 9, 11, 13]);
+                const a = rint(20, 200);
+                const b = rint(20, 200);
+                ans = (a + b) % m;
+                problem = `(${a} + ${b}) mod ${m} = ?`;
+                explain = `(${a%m} + ${b%m}) mod ${m} = ${(a%m + b%m) % m}`;
+            } else if (pat === 'mulMod') {
+                const m = pick([7, 9, 11, 13]);
+                const a = rint(5, 50);
+                const b = rint(5, 50);
+                ans = (a * b) % m;
+                problem = `(${a} × ${b}) mod ${m} = ?`;
+                explain = `(${a%m} × ${b%m}) mod ${m} = ${(a%m * b%m) % m}`;
+            } else if (pat === 'powMod') {
+                // a^n mod m, small enough to compute mentally via cycles
+                const m = pick([5, 7, 11, 13]);
+                const a = rint(2, m - 1);
+                const n = rint(3, 12);
+                // Build cycle of a mod m
+                const cyc = [];
+                let v = 1;
+                for (let i = 0; i < m; i++) {
+                    v = (v * a) % m;
+                    if (cyc.length && cyc[0] === v && i > 0) break;
+                    cyc.push(v);
+                }
+                ans = cyc[(n - 1) % cyc.length];
+                problem = `${a}^${n} mod ${m} = ?`;
+                explain = `Cycle of ${a} mod ${m}: [${cyc.join(',')}] (len ${cyc.length}); (${n}−1) mod ${cyc.length} = ${(n-1)%cyc.length} ⇒ ${ans}`;
+            } else { // lastDigitBig — last digit of a sum/product
+                const a = rint(13, 99);
+                const b = rint(13, 99);
+                const useMul = Math.random() < 0.5;
+                if (useMul) {
+                    ans = (a * b) % 10;
+                    problem = `Last digit of ${a} × ${b} = ?`;
+                    explain = `(${a%10} × ${b%10}) mod 10 = ${(a%10 * b%10) % 10}`;
+                } else {
+                    ans = (a + b) % 10;
+                    problem = `Last digit of ${a} + ${b} = ?`;
+                    explain = `(${a%10} + ${b%10}) mod 10 = ${(a%10 + b%10) % 10}`;
+                }
+            }
+            return { op: 'm', a: 0, b: 0, answer: ans, problem, explain };
+        } else if (op === 'n') {
+            // Combinatorics: factorials, permutations, combinations
+            const fact = (k) => { let r = 1; for (let i = 2; i <= k; i++) r *= i; return r; };
+            const binom = (n, k) => {
+                if (k < 0 || k > n) return 0;
+                k = Math.min(k, n - k);
+                let r = 1;
+                for (let i = 1; i <= k; i++) r = r * (n - i + 1) / i;
+                return Math.round(r);
+            };
+            const patterns = (cfg.range === 'easy')
+                ? ['fact', 'choose']
+                : (cfg.range === 'medium')
+                    ? ['fact', 'choose', 'perm', 'arrange']
+                    : ['fact', 'choose', 'perm', 'arrange', 'chooseSum', 'multinom'];
+            const pat = pick(patterns);
+            let problem, ans, explain;
+            if (pat === 'fact') {
+                const n = (cfg.range === 'easy') ? rint(3, 6) : rint(4, 8);
+                ans = fact(n);
+                problem = `${n}! = ?`;
+                explain = `${n}! = ${Array.from({length:n}, (_,i)=>n-i).join('·')} = ${ans}`;
+            } else if (pat === 'choose') {
+                const n = rint(4, cfg.range === 'easy' ? 7 : 10);
+                const k = rint(1, n - 1);
+                ans = binom(n, k);
+                problem = `C(${n}, ${k}) = ?`;
+                explain = `${n}! / (${k}!·${n-k}!) = ${ans}`;
+            } else if (pat === 'perm') {
+                const n = rint(4, 9);
+                const k = rint(2, Math.min(4, n - 1));
+                ans = fact(n) / fact(n - k);
+                problem = `P(${n}, ${k}) = ? (ordered)`;
+                explain = `${n}!/(${n}−${k})! = ${Array.from({length:k}, (_,i)=>n-i).join('·')} = ${ans}`;
+            } else if (pat === 'arrange') {
+                // # arrangements of a word with repeated letters
+                const words = [['BOOK', 4, [2]], ['MISS', 4, [2]], ['BANANA', 6, [3, 2]],
+                               ['LEVEL', 5, [2, 2]], ['MAMMA', 5, [2, 2]], ['HELLO', 5, [2]]];
+                const [w, n, reps] = pick(words);
+                let denom = 1;
+                reps.forEach(r => { denom *= fact(r); });
+                ans = fact(n) / denom;
+                problem = `Distinct arrangements of letters in "${w}" = ?`;
+                explain = `${n}! / (${reps.map(r=>r+'!').join('·')}) = ${ans}`;
+            } else if (pat === 'chooseSum') {
+                // C(n,0)+C(n,1)+...+C(n,n) = 2^n  — phrased as "subsets of n-element set"
+                const n = rint(3, 7);
+                ans = Math.pow(2, n);
+                problem = `# subsets of a set with ${n} elements = ?`;
+                explain = `2^${n} = ${ans} (each element in or out)`;
+            } else { // multinom — split n items into groups
+                // n items into groups of sizes [a,b,c]
+                const a = rint(2, 3), b = rint(2, 3), c = rint(2, 3);
+                const n = a + b + c;
+                ans = fact(n) / (fact(a) * fact(b) * fact(c));
+                problem = `Split ${n} items into groups of (${a}, ${b}, ${c}) = ?`;
+                explain = `${n}! / (${a}!·${b}!·${c}!) = ${ans}`;
+            }
+            return { op: 'n', a: 0, b: 0, answer: ans, problem, explain };
+        } else if (op === 'l') {
+            // Logs / exponents mental
+            const patterns = (cfg.range === 'easy')
+                ? ['log2', 'log10']
+                : (cfg.range === 'medium')
+                    ? ['log2', 'log10', 'pow', 'logProd']
+                    : ['log2', 'log10', 'pow', 'logProd', 'logQuot', 'cmpPow'];
+            const pat = pick(patterns);
+            let problem, ans, explain;
+            if (pat === 'log2') {
+                const k = rint(2, 12);
+                const x = Math.pow(2, k);
+                ans = k;
+                problem = `log₂(${x}) = ?`;
+                explain = `2^${k} = ${x}`;
+            } else if (pat === 'log10') {
+                const k = rint(1, 6);
+                const x = Math.pow(10, k);
+                ans = k;
+                problem = `log₁₀(${x}) = ?`;
+                explain = `10^${k} = ${x}`;
+            } else if (pat === 'pow') {
+                // Compute small powers mentally
+                const base = pick([2, 3, 5]);
+                const exp = (base === 2) ? rint(3, 10) : (base === 3) ? rint(2, 6) : rint(2, 4);
+                ans = Math.pow(base, exp);
+                problem = `${base}^${exp} = ?`;
+                explain = `${base}^${exp} = ${ans}`;
+            } else if (pat === 'logProd') {
+                // log(a·b) = log(a) + log(b) with powers of 2 or 10
+                const useTwo = Math.random() < 0.5;
+                const base = useTwo ? 2 : 10;
+                const k1 = rint(2, 6), k2 = rint(2, 6);
+                ans = k1 + k2;
+                const sub = useTwo ? '₂' : '₁₀';
+                problem = `log${sub}(${Math.pow(base, k1)}·${Math.pow(base, k2)}) = ?`;
+                explain = `log(a·b) = log(a)+log(b) = ${k1}+${k2} = ${ans}`;
+            } else if (pat === 'logQuot') {
+                const useTwo = Math.random() < 0.5;
+                const base = useTwo ? 2 : 10;
+                const k1 = rint(4, 10), k2 = rint(1, k1 - 1);
+                ans = k1 - k2;
+                const sub = useTwo ? '₂' : '₁₀';
+                problem = `log${sub}(${Math.pow(base, k1)}/${Math.pow(base, k2)}) = ?`;
+                explain = `log(a/b) = log(a)−log(b) = ${k1}−${k2} = ${ans}`;
+            } else { // cmpPow — which is larger? Best as MC but works as type via "1"/"2"
+                const a1 = pick([2, 3, 5, 7]);
+                const e1 = rint(5, 12);
+                const a2 = pick([2, 3, 5, 10].filter(x => x !== a1));
+                const e2 = rint(4, 10);
+                const v1 = Math.pow(a1, e1);
+                const v2 = Math.pow(a2, e2);
+                ans = v1 > v2 ? 1 : 2;
+                problem = `Larger: (1) ${a1}^${e1}  or  (2) ${a2}^${e2}? Answer 1 or 2`;
+                explain = `${a1}^${e1}=${v1}, ${a2}^${e2}=${v2} ⇒ ${ans}`;
+            }
+            return { op: 'l', a: 0, b: 0, answer: ans, problem, explain };
+        } else if (op === 'k') {
+            // Market-making mental math — simplified scenarios common in trader interviews
+            const patterns = (cfg.range === 'easy')
+                ? ['midprice', 'spreadEdge']
+                : (cfg.range === 'medium')
+                    ? ['midprice', 'spreadEdge', 'pnlFill', 'edgeBps']
+                    : ['midprice', 'spreadEdge', 'pnlFill', 'edgeBps', 'fairFromQuotes', 'inventoryPnl'];
+            const pat = pick(patterns);
+            let problem, ans, explain;
+            if (pat === 'midprice') {
+                // Given bid/ask, compute mid
+                const fair = rint(50, 500);
+                const halfSpread = rint(1, 5);
+                const bid = fair - halfSpread;
+                const ask = fair + halfSpread;
+                ans = (bid + ask) / 2;
+                problem = `Bid ${bid}, Ask ${ask}. Mid price = ?`;
+                explain = `(bid + ask) / 2 = (${bid} + ${ask}) / 2 = ${ans}`;
+            } else if (pat === 'spreadEdge') {
+                // Given fair value and your fill price, what's your edge per share?
+                const fair = rint(50, 200);
+                const buy = Math.random() < 0.5;
+                const offset = rint(1, 5);
+                const fill = buy ? fair - offset : fair + offset;
+                ans = buy ? (fair - fill) : (fill - fair);
+                const side = buy ? 'bought' : 'sold';
+                problem = `Fair = ${fair}. You ${side} 1 lot at ${fill}. Edge per lot = ?`;
+                explain = `${buy ? 'fair − price' : 'price − fair'} = ${ans}`;
+            } else if (pat === 'pnlFill') {
+                // P&L from N fills at edge E
+                const edge = pick([0.5, 1, 1.5, 2]);
+                const fills = rint(5, 50);
+                ans = Math.round(edge * fills * 100) / 100;
+                problem = `Avg edge $${edge}/lot × ${fills} lots filled. Gross P&L = ?`;
+                explain = `${edge} × ${fills} = ${ans}`;
+            } else if (pat === 'edgeBps') {
+                // Convert dollar edge to basis points of price (1 bp = 0.01%)
+                const fair = pick([100, 200, 250, 500, 1000]);
+                const edgeDollars = pick([0.1, 0.25, 0.5, 1, 2]);
+                ans = Math.round((edgeDollars / fair) * 10000 * 10) / 10; // 1 dp bps
+                problem = `Edge $${edgeDollars} on a $${fair} stock = ? bps`;
+                explain = `(${edgeDollars}/${fair}) × 10000 = ${ans} bps`;
+            } else if (pat === 'fairFromQuotes') {
+                // Two competing markets — pick the better implied fair (weighted mid by size)
+                // Simpler: weighted mid given bid_sz, ask_sz at bid/ask
+                const bid = rint(95, 105);
+                const ask = bid + rint(1, 4);
+                const bidSz = rint(1, 9);
+                const askSz = rint(1, 9);
+                // Weighted by *opposite* size (heavier side pulls price toward the other side's quote)
+                const wmid = (bid * askSz + ask * bidSz) / (bidSz + askSz);
+                ans = Math.round(wmid * 100) / 100;
+                problem = `Bid ${bid}×${bidSz}, Ask ${ask}×${askSz}. Weighted mid = ?`;
+                explain = `(bid·askSz + ask·bidSz) / (bidSz+askSz) = (${bid}·${askSz} + ${ask}·${bidSz}) / ${bidSz+askSz} = ${ans}`;
+            } else { // inventoryPnl — mark-to-market P&L on a long/short position
+                const qty = pick([-50, -20, -10, 10, 20, 50, 100]);
+                const entry = rint(50, 200);
+                const move = pick([-5, -3, -2, -1, 1, 2, 3, 5]);
+                const last = entry + move;
+                ans = qty * (last - entry); // positive when long & up, etc.
+                problem = `Position: ${qty > 0 ? 'long' : 'short'} ${Math.abs(qty)} @ ${entry}. Last ${last}. MTM P&L = ?`;
+                explain = `qty × (last − entry) = ${qty} × (${last} − ${entry}) = ${ans}`;
+            }
+            return { op: 'k', a: 0, b: 0, answer: ans, problem, explain };
         }
 
         const problem = `${a} ${displayOp(op)} ${b}`;
@@ -481,6 +1122,7 @@
             '+': '+', '-': '−', '*': '×', '/': '÷',
             '%': '%', 'f': 'frac', 's': 'x²/√', 'c': 'conv',
             '^': 'aᵇ', 'e': '=?', 'q': '…',
+            'p': 'P', 'm': 'mod', 'n': 'n!', 'l': 'log', 'k': '$',
         }[op] || op;
     }
 
@@ -505,16 +1147,22 @@
         return Number.isFinite(n) ? n : null;
     }
 
-    function isCorrect(userVal, expected) {
+    function isCorrect(userVal, expected, op) {
         if (userVal === null) return false;
-        // Approximation tolerance modes
+        // Approximation tolerance modes (global)
         const tol = config.tolerance;
         if (tol === 'pct5' || tol === 'pct10') {
             const pct = tol === 'pct5' ? 0.05 : 0.10;
             const margin = Math.max(Math.abs(expected) * pct, 0.5);
             return Math.abs(userVal - expected) <= margin;
         }
-        // Strict mode: 0.005 tolerance for fractions/conversions, tight otherwise
+        // Strict: per-op sensible defaults
+        // Probability answers ∈ [0,1] — accept rounding to 2 dp
+        if (op === 'p') return Math.abs(userVal - expected) < 0.01;
+        // EV / dice / Bayes inside 'p' already covered above.
+        // Market-making 'k': handled in its own pickChoice/submit path (score-based), but be lenient here too
+        if (op === 'k') return Math.abs(userVal - expected) < 0.01;
+        // Default: tight tolerance for FP arithmetic
         return Math.abs(userVal - expected) < 0.005;
     }
 
@@ -571,6 +1219,18 @@
         $('mathPaceCount').textContent = '0';
         $('mathFeedback').textContent = '';
         $('mathAnswerInput').value = '';
+
+        // Race-mode counter
+        const raceEl = document.getElementById('mathRaceCounter');
+        const raceProg = document.getElementById('mathRaceProgress');
+        if (raceEl && raceProg) {
+            if (config.mode === 'race') {
+                raceEl.hidden = false;
+                raceProg.textContent = `0 / ${config.raceTarget}`;
+            } else {
+                raceEl.hidden = true;
+            }
+        }
 
         showView('session');
 
@@ -946,6 +1606,39 @@
                 correct + 1, correct - 1, correct + mag, correct - mag,
                 Math.round(correct * 1.5), Math.round(correct / 2),
             );
+        } else if (p.op === 'p') {
+            // Probabilities live in [0,1]; jitter by 0.05/0.1, also include complement
+            candidates.push(
+                Math.round((correct + 0.05) * 1000) / 1000,
+                Math.round((correct - 0.05) * 1000) / 1000,
+                Math.round((correct + 0.1) * 1000) / 1000,
+                Math.round((correct - 0.1) * 1000) / 1000,
+                Math.round((1 - correct) * 1000) / 1000,
+                Math.round((correct * 2) * 1000) / 1000,
+                Math.round((correct / 2) * 1000) / 1000,
+            );
+        } else if (p.op === 'm') {
+            // Modular answers: off by 1/2, also include 0 and full modulus typical confusions
+            candidates.push(correct + 1, correct - 1, correct + 2, correct - 2, 0, 10 - correct);
+        } else if (p.op === 'n') {
+            // Factorials / combinations grow fast; perturb by small factor and ±1
+            candidates.push(
+                correct + 1, correct - 1,
+                Math.round(correct * 2), Math.round(correct / 2),
+                correct + 10, Math.max(1, correct - 10),
+            );
+        } else if (p.op === 'l') {
+            // Logs typically tiny integers; ±1, ±2, double, half
+            candidates.push(correct + 1, correct - 1, correct + 2, correct - 2, correct * 2);
+        } else if (p.op === 'k') {
+            // Market-making: dollar amounts, perturb by 0.5 / 1 / 2 / 5
+            candidates.push(
+                correct + 0.5, correct - 0.5,
+                correct + 1, correct - 1,
+                correct + 2, correct - 2,
+                correct + 5, correct - 5,
+                Math.round(correct * 1.1 * 100) / 100,
+            );
         }
         // Generic perturbations
         candidates.push(
@@ -1007,7 +1700,7 @@
         if (!session.active || !session.current) return;
         const p = session.current;
         const userVal = Number(v);
-        const ok = isCorrect(userVal, p.answer);
+        const ok = isCorrect(userVal, p.answer, p.op);
         const latency = Math.round(performance.now() - session.currentShownAt);
 
         session.attempts.push({
@@ -1025,7 +1718,7 @@
         } else {
             $('mathWrongCount').textContent = String(parseInt($('mathWrongCount').textContent, 10) + 1);
         }
-        flashFeedback(ok, p.answer);
+        flashFeedback(ok, p.answer, p.explain);
         advanceDrill(ok);
         nextProblem();
     }
@@ -1045,18 +1738,37 @@
         const pace = (correct / elapsed) * 60;
         $('mathPaceCount').textContent = pace.toFixed(1);
 
+        // Race mode: update counter and end early on target
+        if (config.mode === 'race') {
+            const raceProg = document.getElementById('mathRaceProgress');
+            if (raceProg) raceProg.textContent = `${correct} / ${config.raceTarget}`;
+            if (correct >= config.raceTarget && session.active) {
+                endSession();
+                return;
+            }
+        }
+
         // If time is up, end immediately rather than waiting for the setTimeout
         if (remaining === 0 && session.active) {
             endSession();
         }
     }
 
-    function flashFeedback(ok, expected) {
+    function flashFeedback(ok, expected, explain) {
         const el = $('mathFeedback');
         el.className = 'math-feedback ' + (ok ? 'is-ok' : 'is-bad');
-        el.textContent = ok ? '✓' : `✗  (${expected})`;
+        if (ok) {
+            el.textContent = '✓';
+        } else {
+            el.innerHTML = `✗  (${expected})` + (explain ? `<div class="math-feedback__explain">${explain}</div>` : '');
+        }
         clearTimeout(flashFeedback._t);
-        flashFeedback._t = setTimeout(() => { el.className = 'math-feedback'; el.textContent = ''; }, ok ? 280 : 1200);
+        // Race mode: minimal feedback hold to maximize throughput
+        // Otherwise: longer hold when there's an explanation to read
+        const hold = (config.mode === 'race')
+            ? (ok ? 120 : 600)
+            : (ok ? 280 : (explain ? 3200 : 1200));
+        flashFeedback._t = setTimeout(() => { el.className = 'math-feedback'; el.innerHTML = ''; }, hold);
     }
 
     function submitAnswer() {
@@ -1069,7 +1781,7 @@
         if (userVal === null) { inp.focus(); return; }
 
         const p = session.current;
-        const ok = isCorrect(userVal, p.answer);
+        const ok = isCorrect(userVal, p.answer, p.op);
         const latency = Math.round(performance.now() - session.currentShownAt);
 
         session.attempts.push({
@@ -1088,7 +1800,7 @@
         } else {
             $('mathWrongCount').textContent = String(parseInt($('mathWrongCount').textContent, 10) + 1);
         }
-        flashFeedback(ok, p.answer);
+        flashFeedback(ok, p.answer, p.explain);
         advanceDrill(ok);
 
         inp.value = '';
@@ -1415,7 +2127,7 @@
             trendEl.innerHTML = '<span class="math-empty">Not enough data yet</span>';
         }
 
-        // Per-op breakdown
+        // Per-op breakdown — grouped into Arithmetic / Quant prep / Trading
         const opEl = $('mathByOp');
         opEl.innerHTML = '';
         if (Array.isArray(s.by_op) && s.by_op.length) {
@@ -1423,8 +2135,24 @@
                 '+': 'Addition', '-': 'Subtraction', '*': 'Multiplication', '/': 'Division',
                 '%': 'Percentages', 'f': 'Fractions', 's': 'Squares & roots', 'c': 'Conversions',
                 '^': 'Compare powers', 'e': 'Solve for ?', 'q': 'Sequences',
+                'p': 'Probability / EV', 'm': 'Modular / last digit',
+                'n': 'Combinatorics', 'l': 'Logs & exponents',
+                'k': 'Market-making',
             };
-            s.by_op.forEach(row => {
+            const sectionFor = (op) => {
+                if ('+-*/%fsc^e'.includes(op)) return 'arith';
+                if ('qpmnl'.includes(op)) return 'quant';
+                if (op === 'k') return 'trading';
+                return 'arith';
+            };
+            const sections = {
+                arith:   { label: 'Arithmetic', rows: [] },
+                quant:   { label: 'Quant prep', rows: [] },
+                trading: { label: 'Trading',    rows: [] },
+            };
+            s.by_op.forEach(row => sections[sectionFor(row.op)].rows.push(row));
+
+            const buildCard = (row) => {
                 const acc = row.accuracy != null ? `${(row.accuracy * 100).toFixed(0)}%` : '—';
                 const lat = row.avg_latency_ms != null ? `${row.avg_latency_ms} ms` : '—';
                 const div = document.createElement('div');
@@ -1439,7 +2167,23 @@
                         <span><strong>${acc}</strong> accuracy</span>
                         <span><strong>${lat}</strong> avg</span>
                     </div>`;
-                opEl.appendChild(div);
+                return div;
+            };
+
+            ['arith', 'quant', 'trading'].forEach(key => {
+                const sec = sections[key];
+                if (!sec.rows.length) return;
+                const wrap = document.createElement('div');
+                wrap.className = `math-op-section math-op-section--${key}`;
+                const heading = document.createElement('div');
+                heading.className = 'math-op-section__label';
+                heading.textContent = sec.label;
+                wrap.appendChild(heading);
+                const grid = document.createElement('div');
+                grid.className = 'math-op-section__grid';
+                sec.rows.forEach(r => grid.appendChild(buildCard(r)));
+                wrap.appendChild(grid);
+                opEl.appendChild(wrap);
             });
         }
     }
@@ -1449,6 +2193,7 @@
         if (!document.getElementById('mathTrainer')) return;
         bindChips();
         paintChips();
+        updateRaceTargetVisibility();
         loadWeakPreview();
 
         $('mathStartBtn').addEventListener('click', startSession);

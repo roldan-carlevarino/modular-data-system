@@ -39,6 +39,10 @@
   <!-- Plotly (charts) -->
   <script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js"></script>
 
+  <!-- x-spreadsheet (Excel-like sheets) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/x-data-spreadsheet@1.1.9/dist/xspreadsheet.css">
+  <script src="https://cdn.jsdelivr.net/npm/x-data-spreadsheet@1.1.9/dist/xspreadsheet.js"></script>
+
   <!-- Scripts -->
   <script src="core/auth.js"></script>
   <script defer src="core/core.js"></script>
@@ -591,6 +595,140 @@
               </ul>
             </article>
 
+            <article class="cheatsheet-group">
+              <h3>Quant mental-math tables</h3>
+              <div class="cheatsheet-tables">
+                <div class="cheatsheet-table">
+                  <h4>Factorials</h4>
+                  <table>
+                    <tr><th>n</th><th>n!</th></tr>
+                    <tr><td>0</td><td>1</td></tr>
+                    <tr><td>1</td><td>1</td></tr>
+                    <tr><td>2</td><td>2</td></tr>
+                    <tr><td>3</td><td>6</td></tr>
+                    <tr><td>4</td><td>24</td></tr>
+                    <tr><td>5</td><td>120</td></tr>
+                    <tr><td>6</td><td>720</td></tr>
+                    <tr><td>7</td><td>5,040</td></tr>
+                    <tr><td>8</td><td>40,320</td></tr>
+                    <tr><td>9</td><td>362,880</td></tr>
+                    <tr><td>10</td><td>3,628,800</td></tr>
+                    <tr><td>11</td><td>39,916,800</td></tr>
+                    <tr><td>12</td><td>479,001,600</td></tr>
+                  </table>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>Powers of 2</h4>
+                  <table>
+                    <tr><th>n</th><th>2ⁿ</th></tr>
+                    <tr><td>0</td><td>1</td></tr>
+                    <tr><td>1</td><td>2</td></tr>
+                    <tr><td>2</td><td>4</td></tr>
+                    <tr><td>3</td><td>8</td></tr>
+                    <tr><td>4</td><td>16</td></tr>
+                    <tr><td>5</td><td>32</td></tr>
+                    <tr><td>6</td><td>64</td></tr>
+                    <tr><td>7</td><td>128</td></tr>
+                    <tr><td>8</td><td>256</td></tr>
+                    <tr><td>9</td><td>512</td></tr>
+                    <tr><td>10</td><td>1,024</td></tr>
+                    <tr><td>11</td><td>2,048</td></tr>
+                    <tr><td>12</td><td>4,096</td></tr>
+                    <tr><td>16</td><td>65,536</td></tr>
+                    <tr><td>20</td><td>≈ 1.05 M</td></tr>
+                  </table>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>Squares 11–25</h4>
+                  <table>
+                    <tr><th>n</th><th>n²</th></tr>
+                    <tr><td>11</td><td>121</td></tr>
+                    <tr><td>12</td><td>144</td></tr>
+                    <tr><td>13</td><td>169</td></tr>
+                    <tr><td>14</td><td>196</td></tr>
+                    <tr><td>15</td><td>225</td></tr>
+                    <tr><td>16</td><td>256</td></tr>
+                    <tr><td>17</td><td>289</td></tr>
+                    <tr><td>18</td><td>324</td></tr>
+                    <tr><td>19</td><td>361</td></tr>
+                    <tr><td>20</td><td>400</td></tr>
+                    <tr><td>21</td><td>441</td></tr>
+                    <tr><td>22</td><td>484</td></tr>
+                    <tr><td>23</td><td>529</td></tr>
+                    <tr><td>24</td><td>576</td></tr>
+                    <tr><td>25</td><td>625</td></tr>
+                  </table>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>Fractions → decimals</h4>
+                  <table>
+                    <tr><th>frac</th><th>dec</th><th>%</th></tr>
+                    <tr><td>1/2</td><td>0.5</td><td>50%</td></tr>
+                    <tr><td>1/3</td><td>0.333…</td><td>33.3%</td></tr>
+                    <tr><td>2/3</td><td>0.666…</td><td>66.7%</td></tr>
+                    <tr><td>1/4</td><td>0.25</td><td>25%</td></tr>
+                    <tr><td>3/4</td><td>0.75</td><td>75%</td></tr>
+                    <tr><td>1/5</td><td>0.2</td><td>20%</td></tr>
+                    <tr><td>1/6</td><td>0.1666…</td><td>16.7%</td></tr>
+                    <tr><td>1/7</td><td>0.142857…</td><td>14.3%</td></tr>
+                    <tr><td>1/8</td><td>0.125</td><td>12.5%</td></tr>
+                    <tr><td>3/8</td><td>0.375</td><td>37.5%</td></tr>
+                    <tr><td>5/8</td><td>0.625</td><td>62.5%</td></tr>
+                    <tr><td>7/8</td><td>0.875</td><td>87.5%</td></tr>
+                    <tr><td>1/9</td><td>0.111…</td><td>11.1%</td></tr>
+                    <tr><td>1/11</td><td>0.0909…</td><td>9.09%</td></tr>
+                    <tr><td>1/12</td><td>0.0833…</td><td>8.33%</td></tr>
+                    <tr><td>1/16</td><td>0.0625</td><td>6.25%</td></tr>
+                  </table>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>C(n, k) — binomials</h4>
+                  <table>
+                    <tr><th>n\k</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th></tr>
+                    <tr><td>1</td><td>1</td><td>1</td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td>2</td><td>1</td><td>2</td><td>1</td><td></td><td></td><td></td></tr>
+                    <tr><td>3</td><td>1</td><td>3</td><td>3</td><td>1</td><td></td><td></td></tr>
+                    <tr><td>4</td><td>1</td><td>4</td><td>6</td><td>4</td><td>1</td><td></td></tr>
+                    <tr><td>5</td><td>1</td><td>5</td><td>10</td><td>10</td><td>5</td><td>1</td></tr>
+                    <tr><td>6</td><td>1</td><td>6</td><td>15</td><td>20</td><td>15</td><td>6</td></tr>
+                    <tr><td>7</td><td>1</td><td>7</td><td>21</td><td>35</td><td>35</td><td>21</td></tr>
+                    <tr><td>8</td><td>1</td><td>8</td><td>28</td><td>56</td><td>70</td><td>56</td></tr>
+                    <tr><td>9</td><td>1</td><td>9</td><td>36</td><td>84</td><td>126</td><td>126</td></tr>
+                    <tr><td>10</td><td>1</td><td>10</td><td>45</td><td>120</td><td>210</td><td>252</td></tr>
+                  </table>
+                  <p class="cheatsheet-note">Symmetric: C(n, k) = C(n, n−k). Row sum = 2ⁿ.</p>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>Last-digit cycles of aⁿ</h4>
+                  <table>
+                    <tr><th>a</th><th>cycle</th><th>len</th></tr>
+                    <tr><td>2</td><td>2, 4, 8, 6</td><td>4</td></tr>
+                    <tr><td>3</td><td>3, 9, 7, 1</td><td>4</td></tr>
+                    <tr><td>4</td><td>4, 6</td><td>2</td></tr>
+                    <tr><td>5</td><td>5</td><td>1</td></tr>
+                    <tr><td>6</td><td>6</td><td>1</td></tr>
+                    <tr><td>7</td><td>7, 9, 3, 1</td><td>4</td></tr>
+                    <tr><td>8</td><td>8, 4, 2, 6</td><td>4</td></tr>
+                    <tr><td>9</td><td>9, 1</td><td>2</td></tr>
+                  </table>
+                  <p class="cheatsheet-note">Last digit of aⁿ = cycle[(n−1) mod len].</p>
+                </div>
+                <div class="cheatsheet-table">
+                  <h4>Common logs</h4>
+                  <table>
+                    <tr><th>x</th><th>log₂ x</th><th>log₁₀ x ≈</th></tr>
+                    <tr><td>2</td><td>1</td><td>0.301</td></tr>
+                    <tr><td>3</td><td>1.585</td><td>0.477</td></tr>
+                    <tr><td>5</td><td>2.322</td><td>0.699</td></tr>
+                    <tr><td>7</td><td>2.807</td><td>0.845</td></tr>
+                    <tr><td>10</td><td>3.322</td><td>1</td></tr>
+                    <tr><td>e</td><td>1.443</td><td>0.434</td></tr>
+                  </table>
+                  <p class="cheatsheet-note">ln 2 ≈ 0.693, ln 10 ≈ 2.303.</p>
+                </div>
+              </div>
+            </article>
+
           </div>
         </section>
 
@@ -616,17 +754,37 @@
               <div class="math-config__group">
                 <label class="math-config__label">Operations</label>
                 <div class="math-chips" data-group="ops">
-                  <button type="button" class="math-chip" data-value="+">+ Addition</button>
-                  <button type="button" class="math-chip" data-value="-">− Subtraction</button>
-                  <button type="button" class="math-chip" data-value="*">× Multiplication</button>
-                  <button type="button" class="math-chip" data-value="/">÷ Division</button>
-                  <button type="button" class="math-chip" data-value="%" title="Mix of 'X% of Y' and 'X is what % of Y' — includes sub-1% values">% Percentages</button>
-                  <button type="button" class="math-chip" data-value="f" title="Fraction add/subtract — answer as decimal or a/b">½ Fractions</button>
-                  <button type="button" class="math-chip" data-value="s" title="x² and √x (perfect squares)">x² √ Squares</button>
-                  <button type="button" class="math-chip" data-value="c" title="Decimal ↔ fraction ↔ percent conversions">↔ Conversions</button>
-                  <button type="button" class="math-chip" data-value="^" title="Compare powers — which is the largest? Best in MC mode.">aᵇ Compare powers</button>
-                  <button type="button" class="math-chip" data-value="e" title="Solve for the missing value: a × ? = c, a / ? = c, a × b = c × ?">= Solve for ?</button>
-                  <button type="button" class="math-chip" data-value="q" title="Number sequences (quant test prep): arithmetic, geometric, Fibonacci, recurrences, alternating ops…">… Sequences</button>
+                  <div class="math-chips__section">
+                    <span class="math-chips__section-label">Arithmetic</span>
+                    <div class="math-chips__row">
+                      <button type="button" class="math-chip" data-value="+">+ Addition</button>
+                      <button type="button" class="math-chip" data-value="-">− Subtraction</button>
+                      <button type="button" class="math-chip" data-value="*">× Multiplication</button>
+                      <button type="button" class="math-chip" data-value="/">÷ Division</button>
+                      <button type="button" class="math-chip" data-value="%" title="Mix of 'X% of Y' and 'X is what % of Y' — includes sub-1% values">% Percentages</button>
+                      <button type="button" class="math-chip" data-value="f" title="Fraction add/subtract — answer as decimal or a/b">½ Fractions</button>
+                      <button type="button" class="math-chip" data-value="s" title="x² and √x (perfect squares)">x² √ Squares</button>
+                      <button type="button" class="math-chip" data-value="c" title="Decimal ↔ fraction ↔ percent conversions">↔ Conversions</button>
+                      <button type="button" class="math-chip" data-value="^" title="Compare powers — which is the largest? Best in MC mode.">aᵇ Compare powers</button>
+                      <button type="button" class="math-chip" data-value="e" title="Solve for the missing value: a × ? = c, a / ? = c, a × b = c × ?">= Solve for ?</button>
+                    </div>
+                  </div>
+                  <div class="math-chips__section math-chips__section--quant">
+                    <span class="math-chips__section-label">Quant prep</span>
+                    <div class="math-chips__row">
+                      <button type="button" class="math-chip" data-value="q" title="Number sequences (quant test prep): arithmetic, geometric, Fibonacci, recurrences, alternating ops…">… Sequences</button>
+                      <button type="button" class="math-chip" data-value="p" title="Probability & expected value: P(A∩B), coin flips C(n,k), dice EV, Bayes">P Probability / EV</button>
+                      <button type="button" class="math-chip" data-value="m" title="Modular arithmetic & last-digit cycles: a mod n, last digit of aⁿ">mod Modular</button>
+                      <button type="button" class="math-chip" data-value="n" title="Combinatorics: n!, C(n,k), P(n,k), distinct arrangements">n! Combinatorics</button>
+                      <button type="button" class="math-chip" data-value="l" title="Logs & exponents: log₂, log₁₀, compare powers, log of products/quotients">log Logs &amp; powers</button>
+                    </div>
+                  </div>
+                  <div class="math-chips__section math-chips__section--trading">
+                    <span class="math-chips__section-label">Trading</span>
+                    <div class="math-chips__row">
+                      <button type="button" class="math-chip" data-value="k" title="Market-making mental math: mid price, weighted mid, edge per lot, P&L, bps, MTM P&L">$ Market-making</button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -664,8 +822,19 @@
                   <button type="button" class="math-chip" data-value="normal">Normal (random)</button>
                   <button type="button" class="math-chip" data-value="weakness" title="Bias problems toward operations and operand pairs you fail or are slow on">Target weak spots</button>
                   <button type="button" class="math-chip" data-value="drill" title="Pick the worst pair, repeat it until you get it right 3 times in a row, then move to the next">Drill (master one at a time)</button>
+                  <button type="button" class="math-chip" data-value="race" title="Sprint mode: hit a target number of correct answers before time runs out. Minimal feedback for max speed (Optiver 80-in-8 style).">🏁 Race</button>
                 </div>
                 <div id="mathWeakPreview" class="math-weak-preview" hidden></div>
+              </div>
+
+              <div class="math-config__group" id="mathRaceTargetGroup" hidden>
+                <label class="math-config__label">Race target (correct answers)</label>
+                <div class="math-chips" data-group="raceTarget" data-single="true">
+                  <button type="button" class="math-chip" data-value="20">20</button>
+                  <button type="button" class="math-chip" data-value="50">50</button>
+                  <button type="button" class="math-chip" data-value="80" title="Optiver classic">80</button>
+                  <button type="button" class="math-chip" data-value="100">100</button>
+                </div>
               </div>
 
               <div class="math-config__group">
@@ -1103,6 +1272,7 @@
                 <span class="math-session-stat"><span class="math-session-stat__label">Correct</span><span class="math-session-stat__val" id="mathCorrectCount">0</span></span>
                 <span class="math-session-stat"><span class="math-session-stat__label">Wrong</span><span class="math-session-stat__val" id="mathWrongCount">0</span></span>
                 <span class="math-session-stat"><span class="math-session-stat__label">Pace</span><span class="math-session-stat__val" id="mathPaceCount">0</span><span class="math-session-stat__unit">/min</span></span>
+                <span class="math-session-stat math-session-stat--race" id="mathRaceCounter" hidden><span class="math-session-stat__label">Race</span><span class="math-session-stat__val" id="mathRaceProgress">0 / 0</span></span>
               </div>
               <button id="mathAbortBtn" class="math-btn math-btn--ghost">Stop</button>
             </div>

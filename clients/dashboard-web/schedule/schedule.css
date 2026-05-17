@@ -506,3 +506,190 @@
   display: none;
 }
 
+/* ─── Project attachments (Excel sheets) ──────────────────────── */
+.project-attachments-btn {
+  background: transparent;
+  border: 1px solid var(--border, #2a3340);
+  color: var(--text, #e6edf3);
+  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  margin-left: 0.4rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+.project-attachments-btn:hover {
+  opacity: 1;
+  background: rgba(125, 165, 220, 0.15);
+  border-color: var(--accent, #7da5dc);
+}
+
+/* Modal shell */
+#projectAttachmentsModal.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+#projectAttachmentsModal.hidden { display: none; }
+#projectAttachmentsModal .modal-content.project-attachments-modal {
+  background: var(--bg-panel, #1a1f29);
+  color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #2a3340);
+  border-radius: 10px;
+  width: min(1100px, 95vw);
+  height: min(720px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#projectAttachmentsModal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border, #2a3340);
+}
+#projectAttachmentsModal .modal-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+#projectAttachmentsModal .modal-close {
+  background: transparent;
+  border: 0;
+  color: var(--text, #e6edf3);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.4rem;
+}
+
+/* Layout */
+.project-attachments-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.project-attachments-sidebar {
+  width: 220px;
+  border-right: 1px solid var(--border, #2a3340);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pa-sidebar-header {
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--border, #2a3340);
+}
+.pa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.pa-list-item {
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  margin-bottom: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pa-list-item:hover { background: rgba(125, 165, 220, 0.1); }
+.pa-list-item.active {
+  background: rgba(125, 165, 220, 0.2);
+  color: var(--accent, #7da5dc);
+}
+.pa-empty-item {
+  padding: 0.6rem;
+  color: var(--text-muted, #8b949e);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.project-attachments-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.pa-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border, #2a3340);
+}
+.pa-name-input {
+  flex: 1;
+  background: var(--bg, #0d1117);
+  color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #2a3340);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+.pa-status {
+  font-size: 0.8rem;
+  color: var(--text-muted, #8b949e);
+  min-width: 110px;
+  text-align: right;
+}
+.pa-actions { display: flex; gap: 0.4rem; }
+.pa-actions button {
+  border: 1px solid var(--border, #2a3340);
+  background: var(--bg, #0d1117);
+  color: var(--text, #e6edf3);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.pa-actions .btn-primary { background: var(--accent, #7da5dc); color: #0d1117; border-color: var(--accent, #7da5dc); }
+.pa-actions .btn-danger { color: #f87171; border-color: #f87171; }
+.pa-actions button:hover { filter: brightness(1.1); }
+
+.pa-editor {
+  flex: 1;
+  padding: 0.5rem;
+  overflow: auto;
+  min-height: 0;
+}
+.pa-editor-host { width: 100%; min-height: 480px; }
+.pa-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted, #8b949e);
+  font-style: italic;
+}
+
+.pa-sidebar-header .btn-secondary {
+  width: 100%;
+  background: var(--bg, #0d1117);
+  color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #2a3340);
+  border-radius: 6px;
+  padding: 0.4rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.pa-sidebar-header .btn-secondary:hover {
+  border-color: var(--accent, #7da5dc);
+  color: var(--accent, #7da5dc);
+}
+

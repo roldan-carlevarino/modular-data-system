@@ -592,6 +592,7 @@ function renderProjects(container, clickable = false) {
             <button class="project-toggle" type="button" ${hasChildren ? '' : 'disabled'}>${toggle}</button>
             <span class="project-icon">${icon}</span>
             <span class="project-name">${project.name}</span>
+            <button class="project-attachments-btn" type="button" title="Spreadsheets attached to this project" data-project-id="${project.id}" data-project-name="${(project.name || '').replace(/"/g, '&quot;')}">📑</button>
             ${project.description ? `<span class="project-desc">${project.description}</span>` : ''}
           `;
 
@@ -603,6 +604,14 @@ function renderProjects(container, clickable = false) {
               if (collapsedProjectIds.has(key)) collapsedProjectIds.delete(key);
               else collapsedProjectIds.add(key);
               renderProjects(container, clickable);
+            });
+          }
+
+          const attachBtn = content.querySelector('.project-attachments-btn');
+          if (attachBtn) {
+            attachBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openProjectAttachmentsModal(project.id, project.name);
             });
           }
 
@@ -735,4 +744,238 @@ if (newProjectBtn) {
   document.getElementById('newProjectName').addEventListener('keydown', e => {
     if (e.key === 'Enter') newProjectSave.click();
   });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Project attachments (Excel sheets attached to a project)
+// ─────────────────────────────────────────────────────────────
+
+const PROJECTS_API_BASE = PROJECTS_URL.replace(/\/$/, '');
+
+const DEFAULT_PROJECT_EXCEL_DATA = {
+  name: 'Sheet1',
+  rows: {
+    len: 50,
+    0: { cells: { 0: { text: 'Item' }, 1: { text: 'Qty' }, 2: { text: 'Price' }, 3: { text: 'Total' } } },
+    1: { cells: { 0: { text: 'A' }, 1: { text: '2' }, 2: { text: '10' }, 3: { text: '=B2*C2' } } },
+    2: { cells: { 0: { text: 'B' }, 1: { text: '3' }, 2: { text: '5' }, 3: { text: '=B3*C3' } } },
+    3: { cells: { 0: { text: 'Total' }, 3: { text: '=SUM(D2:D3)' } } },
+  },
+  cols: { len: 10 },
+};
+
+let projectAttachmentsModal = null;
+let projectAttachmentsState = { projectId: null, projectName: '', list: [], currentId: null, xs: null, dirty: false };
+
+function ensureProjectAttachmentsModal() {
+  if (projectAttachmentsModal) return projectAttachmentsModal;
+  const modal = document.createElement('div');
+  modal.id = 'projectAttachmentsModal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-content project-attachments-modal">
+      <div class="modal-header">
+        <h2><span id="paProjectName"></span> · Spreadsheets</h2>
+        <button type="button" class="modal-close" id="paCloseBtn">×</button>
+      </div>
+      <div class="project-attachments-layout">
+        <aside class="project-attachments-sidebar">
+          <div class="pa-sidebar-header">
+            <button type="button" id="paNewBtn" class="btn-secondary">+ New sheet</button>
+          </div>
+          <ul id="paList" class="pa-list"></ul>
+        </aside>
+        <section class="project-attachments-main">
+          <div class="pa-toolbar">
+            <input type="text" id="paNameInput" placeholder="Sheet name" class="pa-name-input" />
+            <span id="paStatus" class="pa-status"></span>
+            <div class="pa-actions">
+              <button type="button" id="paSaveBtn" class="btn-primary">Save</button>
+              <button type="button" id="paDeleteBtn" class="btn-danger">Delete</button>
+            </div>
+          </div>
+          <div id="paEditor" class="pa-editor"></div>
+          <div id="paEmpty" class="pa-empty">Select or create a sheet on the left.</div>
+        </section>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#paCloseBtn').addEventListener('click', closeProjectAttachmentsModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeProjectAttachmentsModal(); });
+  modal.querySelector('#paNewBtn').addEventListener('click', createProjectAttachment);
+  modal.querySelector('#paSaveBtn').addEventListener('click', saveCurrentProjectAttachment);
+  modal.querySelector('#paDeleteBtn').addEventListener('click', deleteCurrentProjectAttachment);
+  modal.querySelector('#paNameInput').addEventListener('input', () => { projectAttachmentsState.dirty = true; setPaStatus('Unsaved changes'); });
+
+  projectAttachmentsModal = modal;
+  return modal;
+}
+
+function setPaStatus(text) {
+  const el = projectAttachmentsModal?.querySelector('#paStatus');
+  if (el) el.textContent = text || '';
+}
+
+async function openProjectAttachmentsModal(projectId, projectName) {
+  const modal = ensureProjectAttachmentsModal();
+  projectAttachmentsState = { projectId, projectName, list: [], currentId: null, xs: null, dirty: false };
+  modal.querySelector('#paProjectName').textContent = projectName || `Project #${projectId}`;
+  modal.querySelector('#paNameInput').value = '';
+  modal.querySelector('#paEditor').innerHTML = '';
+  modal.querySelector('#paEmpty').style.display = 'block';
+  modal.classList.remove('hidden');
+  await refreshProjectAttachmentsList();
+}
+
+function closeProjectAttachmentsModal() {
+  if (projectAttachmentsState.dirty) {
+    if (!confirm('You have unsaved changes. Close anyway?')) return;
+  }
+  projectAttachmentsModal?.classList.add('hidden');
+  projectAttachmentsState = { projectId: null, projectName: '', list: [], currentId: null, xs: null, dirty: false };
+}
+
+async function refreshProjectAttachmentsList() {
+  const { projectId } = projectAttachmentsState;
+  if (!projectId) return;
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/${projectId}/attachments`);
+    if (!res.ok) throw new Error(await res.text());
+    const list = await res.json();
+    projectAttachmentsState.list = list;
+    renderProjectAttachmentsSidebar();
+  } catch (err) {
+    console.error('attachments list error', err);
+    setPaStatus('Error loading attachments');
+  }
+}
+
+function renderProjectAttachmentsSidebar() {
+  const ul = projectAttachmentsModal?.querySelector('#paList');
+  if (!ul) return;
+  ul.innerHTML = '';
+  if (!projectAttachmentsState.list.length) {
+    ul.innerHTML = '<li class="pa-empty-item">No sheets yet</li>';
+    return;
+  }
+  projectAttachmentsState.list.forEach(att => {
+    const li = document.createElement('li');
+    li.className = 'pa-list-item';
+    if (String(att.id) === String(projectAttachmentsState.currentId)) li.classList.add('active');
+    li.textContent = att.name;
+    li.addEventListener('click', () => loadProjectAttachment(att.id));
+    ul.appendChild(li);
+  });
+}
+
+async function loadProjectAttachment(attId) {
+  if (projectAttachmentsState.dirty) {
+    if (!confirm('Discard unsaved changes?')) return;
+  }
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/attachments/${attId}`);
+    if (!res.ok) throw new Error(await res.text());
+    const att = await res.json();
+    projectAttachmentsState.currentId = att.id;
+    projectAttachmentsState.dirty = false;
+    setPaStatus('');
+    const modal = projectAttachmentsModal;
+    modal.querySelector('#paNameInput').value = att.name || '';
+    modal.querySelector('#paEmpty').style.display = 'none';
+    const editor = modal.querySelector('#paEditor');
+    editor.innerHTML = '<div class="pa-editor-host"></div>';
+    const host = editor.querySelector('.pa-editor-host');
+    if (typeof x_spreadsheet === 'undefined') {
+      editor.innerHTML = '<p class="diagram-error">⚠ x-spreadsheet not loaded</p>';
+      return;
+    }
+    const initial = att.data && (att.data.rows || Array.isArray(att.data)) ? att.data : DEFAULT_PROJECT_EXCEL_DATA;
+    const xs = x_spreadsheet(host, {
+      mode: 'edit',
+      showToolbar: true,
+      showGrid: true,
+      showContextmenu: true,
+      showBottomBar: true,
+      view: { height: () => 480, width: () => host.clientWidth || 800 },
+      row: { len: 50, height: 25 },
+      col: { len: 26, width: 100, indexWidth: 60, minWidth: 60 },
+    }).loadData(initial);
+    xs.on('change', () => { projectAttachmentsState.dirty = true; setPaStatus('Unsaved changes'); });
+    projectAttachmentsState.xs = xs;
+    setTimeout(() => { try { xs.reRender(); } catch (e) {} }, 50);
+    renderProjectAttachmentsSidebar();
+  } catch (err) {
+    console.error('load attachment error', err);
+    setPaStatus('Error loading sheet');
+  }
+}
+
+async function createProjectAttachment() {
+  const { projectId } = projectAttachmentsState;
+  if (!projectId) return;
+  const name = prompt('Sheet name:', 'New sheet');
+  if (!name) return;
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/${projectId}/attachments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), kind: 'excel', data: DEFAULT_PROJECT_EXCEL_DATA }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const created = await res.json();
+    await refreshProjectAttachmentsList();
+    await loadProjectAttachment(created.id);
+  } catch (err) {
+    console.error('create attachment error', err);
+    alert('Error creating sheet');
+  }
+}
+
+async function saveCurrentProjectAttachment() {
+  const { currentId, xs } = projectAttachmentsState;
+  if (!currentId) return;
+  const name = projectAttachmentsModal.querySelector('#paNameInput').value.trim() || 'Untitled';
+  let data = null;
+  try { data = xs ? xs.getData() : null; } catch (e) { data = null; }
+  try {
+    setPaStatus('Saving…');
+    const res = await fetch(`${PROJECTS_API_BASE}/attachments/${currentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, data: data || {} }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    projectAttachmentsState.dirty = false;
+    setPaStatus('Saved ✓');
+    // Update in list cache
+    const item = projectAttachmentsState.list.find(a => a.id === currentId);
+    if (item) item.name = name;
+    renderProjectAttachmentsSidebar();
+    setTimeout(() => setPaStatus(''), 1500);
+  } catch (err) {
+    console.error('save attachment error', err);
+    setPaStatus('Save error');
+  }
+}
+
+async function deleteCurrentProjectAttachment() {
+  const { currentId } = projectAttachmentsState;
+  if (!currentId) return;
+  if (!confirm('Delete this sheet permanently?')) return;
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/attachments/${currentId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    projectAttachmentsState.currentId = null;
+    projectAttachmentsState.xs = null;
+    projectAttachmentsState.dirty = false;
+    projectAttachmentsModal.querySelector('#paEditor').innerHTML = '';
+    projectAttachmentsModal.querySelector('#paNameInput').value = '';
+    projectAttachmentsModal.querySelector('#paEmpty').style.display = 'block';
+    setPaStatus('');
+    await refreshProjectAttachmentsList();
+  } catch (err) {
+    console.error('delete attachment error', err);
+    alert('Error deleting sheet');
+  }
 }

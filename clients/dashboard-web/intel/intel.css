@@ -1249,6 +1249,80 @@
   background: var(--accent-primary);
   border-color: var(--accent-solid);
 }
+.btn-toggle-excel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 6px;
+  background: var(--accent-light);
+  color: var(--accent-solid);
+  border: 1px solid var(--accent-primary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.btn-toggle-excel:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-solid);
+}
+
+/* Excel editor + viewer */
+.excel-container,
+.excel-editor {
+  margin-top: 0.5rem;
+}
+.excel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem;
+  background: var(--accent-light);
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px 6px 0 0;
+  font-size: 0.75rem;
+}
+.excel-toolbar-label {
+  font-weight: 600;
+  color: var(--accent-solid);
+}
+.excel-toolbar-hint {
+  color: var(--text-muted, #888);
+  font-size: 0.72rem;
+}
+.excel-toolbar-hint code {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0 0.25rem;
+  border-radius: 3px;
+}
+.excel-host,
+.excel-render {
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid var(--accent-primary);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+  background: #fff;
+}
+.excel-render {
+  border-radius: 6px;
+  border-top: 1px solid var(--accent-primary);
+  margin: 0.5rem 0;
+}
+/* x-spreadsheet contrast tweaks for dark theme */
+[data-theme="dark"] .excel-host,
+[data-theme="dark"] .excel-render {
+  background: #1a1a1a;
+}
+[data-theme="dark"] .x-spreadsheet,
+[data-theme="dark"] .x-spreadsheet-sheet,
+[data-theme="dark"] .x-spreadsheet-bottombar,
+[data-theme="dark"] .x-spreadsheet-toolbar {
+  color: #e5e5e5;
+}
 /* Diagram editor */
 .diagram-container {
   margin-top: 0.5rem;

@@ -88,6 +88,9 @@
   <script defer src="library/library.js"></script>
   <script defer src="careers/careers.js"></script>
   <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/layout-base/layout-base.js"></script>
+  <script src="https://unpkg.com/cose-base/cose-base.js"></script>
+  <script src="https://unpkg.com/cytoscape-fcose/cytoscape-fcose.js"></script>
   <script defer src="map/map.js"></script>
 </head>
 
@@ -1845,6 +1848,7 @@
               <label class="map-section__filter">
                 <span>Layout</span>
                 <select id="mapLayoutSelect" class="map-section__select">
+                  <option value="fcose" selected>fcose (recommended)</option>
                   <option value="cose">cose</option>
                   <option value="concentric">concentric</option>
                   <option value="breadthfirst">breadthfirst</option>
@@ -1865,10 +1869,12 @@
               <button id="mapReloadBtn" class="map-section__btn" type="button">Reload</button>
             </div>
           </header>
-          <div class="map-section__legend" id="mapLegend"></div>
-          <div id="mapCanvas" class="map-canvas"></div>
-          <div id="mapInfo" class="map-info" style="display:none"></div>
-          <p id="mapStatus" class="map-status" aria-live="polite"></p>
+          <div class="map-canvas-wrap">
+            <div id="mapCanvas" class="map-canvas"></div>
+            <div class="map-section__legend" id="mapLegend"></div>
+            <div id="mapInfo" class="map-info" style="display:none"></div>
+            <p id="mapStatus" class="map-status" aria-live="polite"></p>
+          </div>
         </section>
       </div>
 

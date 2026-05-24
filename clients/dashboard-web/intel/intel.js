@@ -85,8 +85,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setupModeSelector();
   setupBlockTypeFilters();
   setupKnowledgeSidebar();
-  loadProjects();
-  loadConcepts();
+  // Load projects first so the saved project_id is restored before fetching concepts
+  loadProjects().then(() => loadConcepts());
 
   const searchInput = document.getElementById("conceptSearch");
   if (searchInput) {
@@ -124,10 +124,24 @@ async function loadProjects() {
     projectSelect.appendChild(opt);
   });
 
+  // Restore last selected project from localStorage
+  const INTEL_PROJECT_KEY = "intel.selectedProjectId";
+  const savedId = localStorage.getItem(INTEL_PROJECT_KEY);
+  if (savedId && projects.some(p => String(p.id) === String(savedId))) {
+    projectSelect.value = savedId;
+    knowledgeState.project_id = Number(savedId);
+  }
+
   projectSelect.addEventListener("change", () => {
     knowledgeState.project_id = projectSelect.value
       ? Number(projectSelect.value)
       : null;
+
+    if (knowledgeState.project_id) {
+      localStorage.setItem(INTEL_PROJECT_KEY, String(knowledgeState.project_id));
+    } else {
+      localStorage.removeItem(INTEL_PROJECT_KEY);
+    }
 
     syncProjectExcelBtn(projects);
     loadConcepts();

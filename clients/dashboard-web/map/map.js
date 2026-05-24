@@ -1,57 +1,55 @@
-/* Knowledge Map (tab14) — Cytoscape graph of projects + linked entities */
+/* Knowledge Map (tab14) — Obsidian-style Cytoscape graph */
 (() => {
   const API = "https://api-dashboard-production-fc05.up.railway.app";
 
+  // Obsidian-ish palette: soft, slightly desaturated, distinct hues
   const TYPE_COLORS = {
-    project:    "#d97706",
-    collection: "#3b82f6",
-    item:       "#ec4899",
-    attachment: "#10b981",
-    concept:    "#8b5cf6",
-    block:      "#9ca3af",
+    project:    "#e8b86c", // warm amber
+    collection: "#7aa2f7", // soft blue
+    item:       "#bb9af7", // lavender
+    attachment: "#9ece6a", // muted green
+    concept:    "#f7768e", // soft pink/red
+    block:      "#7dcfff", // cyan
   };
   const TYPE_LABELS = {
     project:    "Project",
-    collection: "Library collection",
+    collection: "Collection",
     item:       "Library item",
-    attachment: "Project attachment",
-    concept:    "Knowledge concept",
-    block:      "Knowledge block",
-  };
-  const EDGE_COLORS = {
-    subproject:     "#d97706",
-    has_collection: "#3b82f6",
-    contains:       "#ec4899",
-    has_attachment: "#10b981",
-    has_concept:    "#8b5cf6",
-    in_concept:     "#a78bfa",
-    has_block:      "#9ca3af",
+    attachment: "Attachment",
+    concept:    "Concept",
+    block:      "Block",
   };
 
   const state = {
-    loaded:    false,
-    cy:        null,
-    raw:       null,
-    typeFilter:"all",
-    layout:    "cose",
+    loaded:     false,
+    cy:         null,
+    raw:        null,
+    typeFilter: "all",
+    layout:     "fcose",
+    showLabels: false,
   };
 
-  function $(id) { return document.getElementById(id); }
+  const $ = (id) => document.getElementById(id);
+
+  // Register fcose extension if available
+  if (typeof cytoscape !== "undefined" && typeof window.cytoscapeFcose !== "undefined") {
+    try { cytoscape.use(window.cytoscapeFcose); } catch (_) {}
+  }
 
   function setStatus(msg, isError) {
     const el = $("mapStatus");
     if (!el) return;
     el.textContent = msg || "";
-    el.style.color = isError ? "#ef4444" : "";
+    el.style.color = isError ? "#f7768e" : "";
   }
 
   function buildLegend() {
     const el = $("mapLegend");
     if (!el) return;
     el.innerHTML = Object.keys(TYPE_COLORS).map((k) => `
-      <span class="map-legend__item">
+      <span class="map-legend__item" style="color:${TYPE_COLORS[k]}">
         <span class="map-legend__dot" style="background:${TYPE_COLORS[k]}"></span>
-        ${TYPE_LABELS[k]}
+        <span style="color:#9ca3af">${TYPE_LABELS[k]}</span>
       </span>
     `).join("");
   }
@@ -72,9 +70,18 @@
   }
 
   function toCyElements({ nodes, edges }) {
+    // Compute degree so we can size by connectivity (Obsidian style)
+    const degree = new Map();
+    edges.forEach((e) => {
+      degree.set(e.source, (degree.get(e.source) || 0) + 1);
+      degree.set(e.target, (degree.get(e.target) || 0) + 1);
+    });
     const cyNodes = nodes.map((n) => ({
       data: {
-        id: n.id, label: n.label || n.id, type: n.type,
+        id: n.id,
+        label: n.label || n.id,
+        type: n.type,
+        deg: degree.get(n.id) || 0,
         meta: n,
       },
     }));
@@ -89,81 +96,143 @@
     return [...cyNodes, ...cyEdges];
   }
 
-  function nodeSize(type) {
-    if (type === "project") return 38;
-    if (type === "concept") return 28;
-    if (type === "collection") return 26;
-    if (type === "attachment") return 18;
-    if (type === "item") return 16;
-    return 14; // block
+  // Node radius scales with degree (Obsidian-like)
+  function nodeSize(ele) {
+    const deg = ele.data("deg") || 0;
+    const base = ele.data("type") === "project" ? 10 : 6;
+    return base + Math.min(18, Math.sqrt(deg) * 3);
   }
 
   function buildStyle() {
     return [
       {
+        selector: "core",
+        style: { "active-bg-opacity": 0 },
+      },
+      {
         selector: "node",
         style: {
-          "background-color": (ele) => TYPE_COLORS[ele.data("type")] || "#666",
+          "background-color": (ele) => TYPE_COLORS[ele.data("type")] || "#888",
+          "background-opacity": 0.95,
+          "width":  nodeSize,
+          "height": nodeSize,
+          "border-width": 0,
+          // Glow via shadow
+          "shadow-blur":    14,
+          "shadow-color":   (ele) => TYPE_COLORS[ele.data("type")] || "#888",
+          "shadow-opacity": 0.55,
+          "shadow-offset-x": 0,
+          "shadow-offset-y": 0,
+          // Label
           "label": "data(label)",
-          "color": "#e5e7eb",
-          "font-size": 9,
+          "color": "#d4d4d8",
+          "font-size": 8,
+          "font-weight": 400,
           "text-valign": "bottom",
           "text-halign": "center",
-          "text-margin-y": 4,
-          "text-outline-color": "#111827",
-          "text-outline-width": 2,
-          "width":  (ele) => nodeSize(ele.data("type")),
-          "height": (ele) => nodeSize(ele.data("type")),
-          "border-width": 1,
-          "border-color": "#0b1220",
+          "text-margin-y": 5,
+          "min-zoomed-font-size": 7,
+          "text-opacity": 0, // hidden by default; revealed on zoom/hover
+          "text-background-color": "#0c0c10",
+          "text-background-opacity": 0.7,
+          "text-background-padding": 2,
+          "text-background-shape": "roundrectangle",
+          "transition-property": "shadow-blur, shadow-opacity, background-opacity, text-opacity",
+          "transition-duration": "150ms",
+        },
+      },
+      // Show labels for high-degree nodes always
+      {
+        selector: "node[deg >= 4]",
+        style: { "text-opacity": 0.85 },
+      },
+      // Show labels when zoomed in (handled in JS via cy.zoom listener)
+      {
+        selector: "node.show-label",
+        style: { "text-opacity": 1 },
+      },
+      {
+        selector: "node:active, node.hover",
+        style: {
+          "shadow-blur": 24,
+          "shadow-opacity": 0.9,
+          "text-opacity": 1,
+          "z-index": 999,
         },
       },
       {
         selector: "node:selected",
         style: {
-          "border-width": 3,
-          "border-color": "#fbbf24",
+          "border-width": 2,
+          "border-color": "#ffffff",
+          "border-opacity": 0.85,
+          "shadow-blur": 28,
+          "shadow-opacity": 1,
+          "text-opacity": 1,
         },
       },
       {
         selector: "edge",
         style: {
-          "width": 1.2,
-          "line-color": (ele) => EDGE_COLORS[ele.data("kind")] || "#4b5563",
-          "target-arrow-color": (ele) => EDGE_COLORS[ele.data("kind")] || "#4b5563",
-          "target-arrow-shape": "triangle",
-          "arrow-scale": 0.7,
-          "curve-style": "bezier",
-          "opacity": 0.55,
+          "width": 0.7,
+          "line-color": "#4b5269",
+          "line-opacity": 0.55,
+          "curve-style": "straight",
+          "target-arrow-shape": "none",
+          "transition-property": "line-color, width, line-opacity",
+          "transition-duration": "150ms",
         },
       },
       {
-        selector: "edge:selected",
-        style: { "opacity": 1, "width": 2 },
+        selector: "edge.highlight",
+        style: {
+          "line-color": "#e5e7eb",
+          "line-opacity": 0.9,
+          "width": 1.4,
+          "z-index": 998,
+        },
       },
       {
-        selector: "node.faded",
-        style: { "opacity": 0.15 },
-      },
-      {
-        selector: "edge.faded",
-        style: { "opacity": 0.05 },
+        selector: ".faded",
+        style: {
+          "opacity": 0.08,
+          "text-opacity": 0,
+        },
       },
     ];
   }
 
   function getLayoutOpts() {
     const name = state.layout;
-    const common = { animate: false, fit: true, padding: 30 };
+    const common = { animate: true, animationDuration: 600, fit: true, padding: 40 };
+
+    if (name === "fcose") {
+      return {
+        name: "fcose",
+        quality: "default",
+        randomize: true,
+        animate: true,
+        animationDuration: 800,
+        fit: true,
+        padding: 50,
+        nodeRepulsion: 8000,
+        idealEdgeLength: 70,
+        edgeElasticity: 0.45,
+        gravity: 0.25,
+        gravityRange: 3.8,
+        numIter: 2500,
+        tile: true,
+        nodeSeparation: 80,
+      };
+    }
     if (name === "cose") {
       return {
         name: "cose",
         ...common,
-        animate: false,
-        nodeRepulsion: 8000,
+        nodeRepulsion: 10000,
         idealEdgeLength: 90,
-        gravity: 0.25,
-        numIter: 1000,
+        gravity: 0.2,
+        numIter: 1500,
       };
     }
     if (name === "concentric") {
@@ -172,6 +241,7 @@
         ...common,
         concentric: (n) => (n.data("type") === "project" ? 10 : n.data("type") === "concept" ? 5 : 1),
         levelWidth: () => 1,
+        minNodeSpacing: 30,
       };
     }
     return { name, ...common };
@@ -182,39 +252,59 @@
     if (!el) return;
     const m = node.data("meta") || {};
     const t = node.data("type");
+    const color = TYPE_COLORS[t] || "#888";
     const rows = [];
     if (m.status)       rows.push(`<div class="map-info__row">Status: ${m.status}</div>`);
     if (m.project_type) rows.push(`<div class="map-info__row">Type: ${m.project_type}</div>`);
     if (m.subtype)      rows.push(`<div class="map-info__row">Subtype: ${m.subtype}</div>`);
     if (m.project_name) rows.push(`<div class="map-info__row">Project: ${m.project_name}</div>`);
     if (m.concept_name) rows.push(`<div class="map-info__row">Concept: ${m.concept_name}</div>`);
-    if (m.db_id != null) rows.push(`<div class="map-info__row">ID: ${m.db_id}</div>`);
-    const deg = node.degree();
-    rows.push(`<div class="map-info__row">Connections: ${deg}</div>`);
+    rows.push(`<div class="map-info__row">Connections: ${node.degree()}</div>`);
     el.innerHTML = `
-      <button class="map-info__close" id="mapInfoClose" type="button">×</button>
+      <button class="map-info__close" id="mapInfoClose" type="button" aria-label="Close">×</button>
       <div class="map-info__title">
-        <span>${node.data("label")}</span>
-        <span class="map-info__type" style="background:${TYPE_COLORS[t]}33;color:${TYPE_COLORS[t]}">${TYPE_LABELS[t]||t}</span>
+        <span>${escapeHtml(node.data("label"))}</span>
       </div>
-      ${rows.join("")}
+      <span class="map-info__type" style="background:${color}22;color:${color};border:1px solid ${color}44">${TYPE_LABELS[t]||t}</span>
+      <div style="margin-top:0.55rem">${rows.join("")}</div>
     `;
     el.style.display = "block";
     const c = $("mapInfoClose");
-    if (c) c.onclick = () => { el.style.display = "none"; };
+    if (c) c.onclick = () => { el.style.display = "none"; clearHighlight(); };
+  }
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
   }
 
   function highlightNeighborhood(node) {
     const cy = state.cy;
     if (!cy) return;
-    cy.elements().addClass("faded");
-    const nb = node.closedNeighborhood();
-    nb.removeClass("faded");
+    cy.batch(() => {
+      cy.elements().addClass("faded");
+      const nb = node.closedNeighborhood();
+      nb.removeClass("faded");
+      nb.edges().addClass("highlight");
+    });
   }
 
   function clearHighlight() {
     const cy = state.cy;
-    if (cy) cy.elements().removeClass("faded");
+    if (!cy) return;
+    cy.batch(() => {
+      cy.elements().removeClass("faded");
+      cy.edges().removeClass("highlight");
+    });
+  }
+
+  function applyZoomLabelToggle() {
+    const cy = state.cy;
+    if (!cy) return;
+    const z = cy.zoom();
+    if (z > 1.4) cy.nodes().addClass("show-label");
+    else cy.nodes().removeClass("show-label");
   }
 
   function render() {
@@ -239,11 +329,15 @@
       elements,
       style: buildStyle(),
       layout: getLayoutOpts(),
-      wheelSensitivity: 0.2,
+      wheelSensitivity: 0.25,
       minZoom: 0.1,
-      maxZoom: 3.0,
+      maxZoom: 4.0,
+      pixelRatio: "auto",
+      textureOnViewport: true,
+      hideEdgesOnViewport: false,
     });
 
+    // Interactions
     state.cy.on("tap", "node", (evt) => {
       const n = evt.target;
       showInfo(n);
@@ -256,6 +350,9 @@
         if (el) el.style.display = "none";
       }
     });
+    state.cy.on("mouseover", "node", (evt) => evt.target.addClass("hover"));
+    state.cy.on("mouseout",  "node", (evt) => evt.target.removeClass("hover"));
+    state.cy.on("zoom", applyZoomLabelToggle);
 
     setStatus(`${filtered.nodes.length} nodes · ${filtered.edges.length} edges`);
   }
@@ -279,7 +376,7 @@
 
   function bindControls() {
     const fit = $("mapFitBtn");
-    if (fit) fit.addEventListener("click", () => { if (state.cy) state.cy.fit(undefined, 30); });
+    if (fit) fit.addEventListener("click", () => { if (state.cy) state.cy.animate({ fit: { padding: 40 } }, { duration: 400 }); });
 
     const reload = $("mapReloadBtn");
     if (reload) reload.addEventListener("click", load);

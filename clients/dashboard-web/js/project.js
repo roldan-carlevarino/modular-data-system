@@ -753,19 +753,76 @@ if (newProjectBtn) {
 const PROJECTS_API_BASE = PROJECTS_URL.replace(/\/$/, '');
 
 const DEFAULT_PROJECT_EXCEL_DATA = {
+  id: 'workbook-1',
   name: 'Sheet1',
-  rows: {
-    len: 50,
-    0: { cells: { 0: { text: 'Item' }, 1: { text: 'Qty' }, 2: { text: 'Price' }, 3: { text: 'Total' } } },
-    1: { cells: { 0: { text: 'A' }, 1: { text: '2' }, 2: { text: '10' }, 3: { text: '=B2*C2' } } },
-    2: { cells: { 0: { text: 'B' }, 1: { text: '3' }, 2: { text: '5' }, 3: { text: '=B3*C3' } } },
-    3: { cells: { 0: { text: 'Total' }, 3: { text: '=SUM(D2:D3)' } } },
+  sheetOrder: ['sheet-1'],
+  sheets: {
+    'sheet-1': {
+      id: 'sheet-1',
+      name: 'Sheet1',
+      rowCount: 100,
+      columnCount: 26,
+      cellData: {
+        0: {
+          0: { v: 'Item' }, 1: { v: 'Qty' }, 2: { v: 'Price' }, 3: { v: 'Total' },
+        },
+        1: { 0: { v: 'A' }, 1: { v: 2 }, 2: { v: 10 }, 3: { f: '=B2*C2' } },
+        2: { 0: { v: 'B' }, 1: { v: 3 }, 2: { v: 5 }, 3: { f: '=B3*C3' } },
+        3: { 0: { v: 'Total' }, 3: { f: '=SUM(D2:D3)' } },
+      },
+    },
   },
-  cols: { len: 10 },
 };
 
+// Convert legacy x-spreadsheet snapshot into a Univer IWorkbookData snapshot.
+function xsToUniverSnapshot(legacy) {
+  if (!legacy || typeof legacy !== 'object') return null;
+  // Already Univer format
+  if (legacy.sheetOrder && legacy.sheets) return legacy;
+  const sheetsArray = Array.isArray(legacy) ? legacy : [legacy];
+  const sheetOrder = [];
+  const sheets = {};
+  sheetsArray.forEach((s, i) => {
+    if (!s || !s.rows) return;
+    const id = `sheet-${i + 1}`;
+    sheetOrder.push(id);
+    const cellData = {};
+    Object.keys(s.rows).forEach(rk => {
+      if (rk === 'len') return;
+      const row = s.rows[rk];
+      if (!row || !row.cells) return;
+      const r = Number(rk);
+      cellData[r] = cellData[r] || {};
+      Object.keys(row.cells).forEach(ck => {
+        const cell = row.cells[ck];
+        const c = Number(ck);
+        const text = cell && cell.text != null ? String(cell.text) : '';
+        if (text.startsWith('=')) cellData[r][c] = { f: text };
+        else cellData[r][c] = { v: text };
+      });
+    });
+    sheets[id] = {
+      id,
+      name: s.name || `Sheet${i + 1}`,
+      rowCount: Math.max(100, (s.rows && s.rows.len) || 100),
+      columnCount: Math.max(26, (s.cols && s.cols.len) || 26),
+      cellData,
+    };
+  });
+  if (!sheetOrder.length) return null;
+  return {
+    id: 'workbook-1',
+    name: sheets[sheetOrder[0]].name,
+    sheetOrder,
+    sheets,
+  };
+}
+
 let projectAttachmentsModal = null;
-let projectAttachmentsState = { projectId: null, projectName: '', list: [], currentId: null, xs: null, dirty: false };
+let projectAttachmentsState = {
+  projectId: null, projectName: '', list: [], currentId: null,
+  univer: null, univerAPI: null, workbook: null, dirty: false,
+};
 
 function ensureProjectAttachmentsModal() {
   if (projectAttachmentsModal) return projectAttachmentsModal;
@@ -822,7 +879,7 @@ async function openProjectAttachmentsModal(projectId, projectName) {
   projectAttachmentsState = { projectId, projectName, list: [], currentId: null, xs: null, dirty: false };
   modal.querySelector('#paProjectName').textContent = projectName || `Project #${projectId}`;
   modal.querySelector('#paNameInput').value = '';
-  modal.querySelector('#paEditor').innerHTML = '';
+  disposeUniverEditor();
   modal.querySelector('#paEmpty').style.display = 'block';
   modal.classList.remove('hidden');
   await refreshProjectAttachmentsList();
@@ -832,8 +889,25 @@ function closeProjectAttachmentsModal() {
   if (projectAttachmentsState.dirty) {
     if (!confirm('You have unsaved changes. Close anyway?')) return;
   }
+  disposeUniverEditor();
   projectAttachmentsModal?.classList.add('hidden');
-  projectAttachmentsState = { projectId: null, projectName: '', list: [], currentId: null, xs: null, dirty: false };
+  projectAttachmentsState = {
+    projectId: null, projectName: '', list: [], currentId: null,
+    univer: null, univerAPI: null, workbook: null, dirty: false,
+  };
+}
+
+function disposeUniverEditor() {
+  try {
+    if (projectAttachmentsState.univer && typeof projectAttachmentsState.univer.dispose === 'function') {
+      projectAttachmentsState.univer.dispose();
+    }
+  } catch (e) { console.warn('univer dispose', e); }
+  projectAttachmentsState.univer = null;
+  projectAttachmentsState.univerAPI = null;
+  projectAttachmentsState.workbook = null;
+  const editor = projectAttachmentsModal?.querySelector('#paEditor');
+  if (editor) editor.innerHTML = '';
 }
 
 async function refreshProjectAttachmentsList() {
@@ -883,27 +957,61 @@ async function loadProjectAttachment(attId) {
     const modal = projectAttachmentsModal;
     modal.querySelector('#paNameInput').value = att.name || '';
     modal.querySelector('#paEmpty').style.display = 'none';
+
+    // Dispose any previous Univer instance before mounting a new one
+    disposeUniverEditor();
+
     const editor = modal.querySelector('#paEditor');
-    editor.innerHTML = '<div class="pa-editor-host"></div>';
-    const host = editor.querySelector('.pa-editor-host');
-    if (typeof x_spreadsheet === 'undefined') {
-      editor.innerHTML = '<p class="diagram-error">⚠ x-spreadsheet not loaded</p>';
+    editor.innerHTML = '<div id="paUniverHost" class="pa-univer-host"></div>';
+
+    if (typeof UniverPresets === 'undefined'
+        || typeof UniverCore === 'undefined'
+        || typeof UniverPresetSheetsCore === 'undefined') {
+      editor.innerHTML = '<p class="diagram-error" style="padding:1rem">⚠ Univer not loaded</p>';
       return;
     }
-    const initial = att.data && (att.data.rows || Array.isArray(att.data)) ? att.data : DEFAULT_PROJECT_EXCEL_DATA;
-    const xs = x_spreadsheet(host, {
-      mode: 'edit',
-      showToolbar: true,
-      showGrid: true,
-      showContextmenu: true,
-      showBottomBar: true,
-      view: { height: () => 480, width: () => host.clientWidth || 800 },
-      row: { len: 50, height: 25 },
-      col: { len: 26, width: 100, indexWidth: 60, minWidth: 60 },
-    }).loadData(initial);
-    xs.on('change', () => { projectAttachmentsState.dirty = true; setPaStatus('Unsaved changes'); });
-    projectAttachmentsState.xs = xs;
-    setTimeout(() => { try { xs.reRender(); } catch (e) {} }, 50);
+
+    const { createUniver } = UniverPresets;
+    const { LocaleType, mergeLocales } = UniverCore;
+    const { UniverSheetsCorePreset } = UniverPresetSheetsCore;
+    const localePack = (typeof UniverPresetSheetsCoreEnUS !== 'undefined') ? UniverPresetSheetsCoreEnUS : {};
+
+    // Optional: data validation (dropdowns, checkboxes, number ranges, etc.)
+    const hasDV = typeof UniverPresetSheetsDataValidation !== 'undefined';
+    const dvLocale = (typeof UniverPresetSheetsDataValidationEnUS !== 'undefined') ? UniverPresetSheetsDataValidationEnUS : {};
+
+    // Optional: filters
+    const hasFilter = typeof UniverPresetSheetsFilter !== 'undefined';
+    const filterLocale = (typeof UniverPresetSheetsFilterEnUS !== 'undefined') ? UniverPresetSheetsFilterEnUS : {};
+
+    const snapshot = xsToUniverSnapshot(att.data) || DEFAULT_PROJECT_EXCEL_DATA;
+
+    const presets = [UniverSheetsCorePreset({ container: 'paUniverHost' })];
+    if (hasDV) presets.push(UniverPresetSheetsDataValidation.UniverSheetsDataValidationPreset());
+    if (hasFilter) presets.push(UniverPresetSheetsFilter.UniverSheetsFilterPreset());
+
+    const { univer, univerAPI } = createUniver({
+      locale: LocaleType.EN_US,
+      locales: { [LocaleType.EN_US]: mergeLocales(localePack, dvLocale, filterLocale) },
+      presets,
+    });
+
+    const workbook = univerAPI.createWorkbook(snapshot);
+    projectAttachmentsState.univer = univer;
+    projectAttachmentsState.univerAPI = univerAPI;
+    projectAttachmentsState.workbook = workbook;
+
+    // Track edits as dirty
+    try {
+      univerAPI.addEvent(univerAPI.Event.SheetValueChanged, () => {
+        projectAttachmentsState.dirty = true;
+        setPaStatus('Unsaved changes');
+      });
+    } catch (e) {
+      // Fallback: mark dirty on any sheet edit-related event if API differs across versions
+      console.warn('univer event hook fallback', e);
+    }
+
     renderProjectAttachmentsSidebar();
   } catch (err) {
     console.error('load attachment error', err);
@@ -933,11 +1041,14 @@ async function createProjectAttachment() {
 }
 
 async function saveCurrentProjectAttachment() {
-  const { currentId, xs } = projectAttachmentsState;
+  const { currentId, workbook } = projectAttachmentsState;
   if (!currentId) return;
   const name = projectAttachmentsModal.querySelector('#paNameInput').value.trim() || 'Untitled';
   let data = null;
-  try { data = xs ? xs.getData() : null; } catch (e) { data = null; }
+  try {
+    if (workbook && typeof workbook.save === 'function') data = workbook.save();
+    else if (workbook && typeof workbook.getSnapshot === 'function') data = workbook.getSnapshot();
+  } catch (e) { console.warn('univer save snapshot error', e); data = null; }
   try {
     setPaStatus('Saving…');
     const res = await fetch(`${PROJECTS_API_BASE}/attachments/${currentId}`, {
@@ -948,7 +1059,6 @@ async function saveCurrentProjectAttachment() {
     if (!res.ok) throw new Error(await res.text());
     projectAttachmentsState.dirty = false;
     setPaStatus('Saved ✓');
-    // Update in list cache
     const item = projectAttachmentsState.list.find(a => a.id === currentId);
     if (item) item.name = name;
     renderProjectAttachmentsSidebar();
@@ -966,10 +1076,9 @@ async function deleteCurrentProjectAttachment() {
   try {
     const res = await fetch(`${PROJECTS_API_BASE}/attachments/${currentId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(await res.text());
+    disposeUniverEditor();
     projectAttachmentsState.currentId = null;
-    projectAttachmentsState.xs = null;
     projectAttachmentsState.dirty = false;
-    projectAttachmentsModal.querySelector('#paEditor').innerHTML = '';
     projectAttachmentsModal.querySelector('#paNameInput').value = '';
     projectAttachmentsModal.querySelector('#paEmpty').style.display = 'block';
     setPaStatus('');

@@ -485,17 +485,39 @@
             $('libFSummary').value = it.summary || '';
             $('libFStart').value = it.start_date || '';
             $('libFDue').value = it.due_date || '';
+            renderCollectionsChecklist((it.collections || []).map(c => c.id));
         } else {
             setActiveChip('lib-modal-type', 'paper');
             refreshStatusOptions('paper');
             toggleDateFields('paper');
             ['libFTitle', 'libFYear', 'libFAuthors', 'libFUrl', 'libFTags', 'libFSummary', 'libFStart', 'libFDue']
                 .forEach(k => $(k).value = '');
+            renderCollectionsChecklist([]);
         }
         modal.style.display = 'flex';
         $('libFTitle').focus();
     }
     function closeItemModal() { $('libModal').style.display = 'none'; }
+
+    function renderCollectionsChecklist(selectedIds) {
+        const el = $('libFCollections');
+        if (!el) return;
+        const sel = new Set((selectedIds || []).map(Number));
+        if (!state.collections.length) {
+            el.innerHTML = '<em class="library__hint">No collections yet. Create one from the sidebar.</em>';
+            return;
+        }
+        el.innerHTML = state.collections.map(c => `
+            <label class="library__chk">
+                <input type="checkbox" value="${c.id}" ${sel.has(c.id) ? 'checked' : ''}>
+                <span>${escapeHtml(c.name)}</span>
+            </label>`).join('');
+    }
+
+    function getSelectedCollectionIds() {
+        return Array.from(document.querySelectorAll('#libFCollections input[type=checkbox]:checked'))
+            .map(i => parseInt(i.value, 10));
+    }
 
     function refreshStatusOptions(type, current) {
         const sel = $('libFStatus');
@@ -528,6 +550,7 @@
             primary_url: $('libFUrl').value.trim() || null,
             summary: $('libFSummary').value.trim() || null,
             tags: $('libFTags').value.split(',').map(s => s.trim()).filter(Boolean),
+            collection_ids: getSelectedCollectionIds(),
             start_date: (type === 'competition' ? ($('libFStart').value || null) : null),
             due_date: (type === 'competition' ? ($('libFDue').value || null) : null),
         };

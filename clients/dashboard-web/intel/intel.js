@@ -129,9 +129,35 @@ async function loadProjects() {
       ? Number(projectSelect.value)
       : null;
 
+    syncProjectExcelBtn(projects);
     loadConcepts();
     fetchKnowledge(); // Reload with new filter
   });
+
+  syncProjectExcelBtn(projects);
+}
+
+function syncProjectExcelBtn(projects) {
+  const btn = document.getElementById('projectSelectExcelBtn');
+  if (!btn) return;
+  const pid = knowledgeState.project_id;
+  if (!pid) {
+    btn.disabled = true;
+    btn.onclick = null;
+    return;
+  }
+  const proj = (projects || []).find(p => Number(p.id) === Number(pid));
+  const name = proj ? proj.name : `Project #${pid}`;
+  btn.disabled = false;
+  btn.title = `Open spreadsheets for ${name}`;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (typeof openProjectAttachmentsModal === 'function') {
+      openProjectAttachmentsModal(pid, name);
+    } else {
+      alert('Project attachments not available');
+    }
+  };
 }
 
 async function loadConcepts() {
@@ -2285,6 +2311,34 @@ function renderRelTree() {
 
         blockRow.appendChild(bIcon);
         blockRow.appendChild(bName);
+
+        // Up / Down buttons to reorder within concept
+        const moveWrap = document.createElement('span');
+        moveWrap.classList.add('rel-block-move');
+        const upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.classList.add('rel-move-btn');
+        upBtn.textContent = '▲';
+        upBtn.title = 'Move up';
+        upBtn.disabled = bidx === 0;
+        upBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          moveBlockWithinConcept(c.id, bidx, bidx - 1);
+        });
+        const downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.classList.add('rel-move-btn');
+        downBtn.textContent = '▼';
+        downBtn.title = 'Move down';
+        downBtn.disabled = bIsLast;
+        downBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          moveBlockWithinConcept(c.id, bidx, bidx + 1);
+        });
+        moveWrap.appendChild(upBtn);
+        moveWrap.appendChild(downBtn);
+        blockRow.appendChild(moveWrap);
+
         blockRow.addEventListener('click', () => {
           relSelectedBlock = b;
           relSelectedConcept = null;
@@ -2298,6 +2352,37 @@ function renderRelTree() {
   }
 
   renderRelNode('root', container, 0, []);
+}
+
+async function moveBlockWithinConcept(conceptId, fromIdx, toIdx) {
+  const siblings = relAllBlocks
+    .filter(b => b.concept_id === conceptId)
+    .slice()
+    .sort((a, b) => {
+      const pa = (a.position == null) ? Number.MAX_SAFE_INTEGER : a.position;
+      const pb = (b.position == null) ? Number.MAX_SAFE_INTEGER : b.position;
+      return pa - pb || a.id - b.id;
+    });
+  if (fromIdx < 0 || toIdx < 0 || fromIdx >= siblings.length || toIdx >= siblings.length) return;
+  const [moved] = siblings.splice(fromIdx, 1);
+  siblings.splice(toIdx, 0, moved);
+  const orderedIds = siblings.map(b => b.id);
+
+  // Optimistic local update
+  siblings.forEach((b, i) => { b.position = i + 1; });
+
+  try {
+    const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/blocks/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    renderRelTree();
+  } catch (e) {
+    console.error('Reorder failed', e);
+    alert('Failed to reorder blocks');
+  }
 }
 
 function renderRelEditPanel(concept) {

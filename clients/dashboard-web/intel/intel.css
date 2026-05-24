@@ -383,6 +383,35 @@
   color: rgba(179, 214, 245, 0.8) !important;
   font-size: 0.78rem !important;
 }
+.rel-block-move {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.rel-block-row:hover .rel-block-move,
+.rel-block-row.selected .rel-block-move {
+  opacity: 1;
+}
+.rel-move-btn {
+  background: transparent;
+  border: 1px solid rgba(99, 179, 237, 0.35);
+  color: rgba(179, 214, 245, 0.9);
+  font-size: 0.6rem;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.rel-move-btn:hover:not(:disabled) {
+  background: rgba(99, 179, 237, 0.18);
+  border-color: rgba(99, 179, 237, 0.6);
+}
+.rel-move-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 
 /* Project checkboxes in block edit */
 .rel-checkbox-list {
@@ -421,6 +450,21 @@
 .project-filter    { grid-area: project-filter; }
 .mode-filter       { grid-area: mode-filter; }
 .block-type-filter { grid-area: block-type-filter; }
+
+.project-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.project-filter > select { flex: 1; min-width: 0; }
+.project-filter #projectSelectExcelBtn {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.project-filter #projectSelectExcelBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 
 #blockTypeFilters {
   display: grid;

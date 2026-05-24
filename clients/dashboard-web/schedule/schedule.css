@@ -537,60 +537,68 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
+  align-items: stretch;
+  justify-content: stretch;
+  z-index: 50;
 }
 #projectAttachmentsModal.hidden { display: none; }
 #projectAttachmentsModal .modal-content.project-attachments-modal {
-  background: var(--bg-panel, #1a1f29);
-  color: var(--text, #e6edf3);
-  border: 1px solid var(--border, #2a3340);
-  border-radius: 10px;
-  width: min(1100px, 95vw);
-  height: min(720px, 90vh);
+  background: #ffffff;
+  color: #1f2328;
+  border: 0;
+  border-radius: 0;
+  width: 100vw;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-shadow: none;
 }
 #projectAttachmentsModal .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border, #2a3340);
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid #d0d7de;
+  background: #f6f8fa;
+  color: #1f2328;
 }
 #projectAttachmentsModal .modal-header h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
+  color: #1f2328;
 }
 #projectAttachmentsModal .modal-close {
   background: transparent;
   border: 0;
-  color: var(--text, #e6edf3);
-  font-size: 1.6rem;
+  color: #57606a;
+  font-size: 1.5rem;
   line-height: 1;
   cursor: pointer;
   padding: 0 0.4rem;
 }
+#projectAttachmentsModal .modal-close:hover { color: #1f2328; }
 
 /* Layout */
 .project-attachments-layout {
   display: flex;
   flex: 1;
   min-height: 0;
+  background: #ffffff;
 }
 .project-attachments-sidebar {
   width: 220px;
-  border-right: 1px solid var(--border, #2a3340);
+  border-right: 1px solid #d0d7de;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: #f6f8fa;
+  color: #1f2328;
 }
 .pa-sidebar-header {
   padding: 0.6rem;
-  border-bottom: 1px solid var(--border, #2a3340);
+  border-bottom: 1px solid #d0d7de;
 }
 .pa-list {
   list-style: none;
@@ -608,15 +616,16 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #1f2328;
 }
-.pa-list-item:hover { background: rgba(125, 165, 220, 0.1); }
+.pa-list-item:hover { background: #eaeef2; }
 .pa-list-item.active {
-  background: rgba(125, 165, 220, 0.2);
-  color: var(--accent, #7da5dc);
+  background: #0969da;
+  color: #ffffff;
 }
 .pa-empty-item {
   padding: 0.6rem;
-  color: var(--text-muted, #8b949e);
+  color: #57606a;
   font-size: 0.85rem;
   font-style: italic;
 }
@@ -627,69 +636,148 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  background: #ffffff;
 }
 .pa-toolbar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.7rem;
-  border-bottom: 1px solid var(--border, #2a3340);
+  border-bottom: 1px solid #d0d7de;
+  background: #f6f8fa;
 }
 .pa-name-input {
   flex: 1;
-  background: var(--bg, #0d1117);
-  color: var(--text, #e6edf3);
-  border: 1px solid var(--border, #2a3340);
+  background: #ffffff;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
   border-radius: 6px;
-  padding: 0.35rem 0.5rem;
+  padding: 0.35rem 0.6rem;
   font-size: 0.9rem;
+}
+.pa-name-input:focus {
+  outline: none;
+  border-color: #0969da;
+  box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.2);
 }
 .pa-status {
   font-size: 0.8rem;
-  color: var(--text-muted, #8b949e);
+  color: #57606a;
   min-width: 110px;
   text-align: right;
 }
 .pa-actions { display: flex; gap: 0.4rem; }
 .pa-actions button {
-  border: 1px solid var(--border, #2a3340);
-  background: var(--bg, #0d1117);
-  color: var(--text, #e6edf3);
+  border: 1px solid #d0d7de;
+  background: #ffffff;
+  color: #1f2328;
   border-radius: 6px;
-  padding: 0.35rem 0.7rem;
+  padding: 0.35rem 0.8rem;
   cursor: pointer;
   font-size: 0.85rem;
+  font-weight: 500;
 }
-.pa-actions .btn-primary { background: var(--accent, #7da5dc); color: #0d1117; border-color: var(--accent, #7da5dc); }
-.pa-actions .btn-danger { color: #f87171; border-color: #f87171; }
-.pa-actions button:hover { filter: brightness(1.1); }
+.pa-actions .btn-primary {
+  background: #0969da;
+  color: #ffffff;
+  border-color: #0969da;
+}
+.pa-actions .btn-primary:hover { background: #0860c8; }
+.pa-actions .btn-danger {
+  color: #cf222e;
+  border-color: #d0d7de;
+  background: #ffffff;
+}
+.pa-actions .btn-danger:hover {
+  background: #cf222e;
+  color: #ffffff;
+  border-color: #cf222e;
+}
+.pa-actions button:not(.btn-primary):not(.btn-danger):hover {
+  background: #f3f4f6;
+}
 
 .pa-editor {
   flex: 1;
-  padding: 0.5rem;
-  overflow: auto;
+  padding: 0;
+  overflow: hidden;
   min-height: 0;
+  background: #ffffff;
+  color: #1f2328;
+  position: relative;
 }
-.pa-editor-host { width: 100%; min-height: 480px; }
+.pa-editor-host {
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  background: #ffffff;
+  color: #1f2328;
+}
+.pa-univer-host {
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  background: #ffffff;
+}
+
+/* Univer renders dropdowns / popovers in portals at body level.
+   Force them above the fullscreen modal (which sits at z-index 9999). */
+.univer-dropdown,
+.univer-popup,
+.univer-tooltip,
+[class*="univer-"][class*="dropdown"],
+[class*="univer-"][class*="popup"],
+[class*="univer-"][class*="menu"],
+[class*="univer-"][class*="tooltip"] {
+  z-index: 20000 !important;
+}
+.pa-editor-host,
+.pa-editor-host * {
+  color: #1f2328;
+}
+.pa-editor-host .x-spreadsheet {
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.pa-editor-host .x-spreadsheet-toolbar {
+  background: #f6f8fa;
+  border-bottom: 1px solid #d0d7de;
+}
+.pa-editor-host .x-spreadsheet-bottombar {
+  background: #f6f8fa;
+  border-top: 1px solid #d0d7de;
+}
+.pa-editor-host .x-spreadsheet-sheet,
+.pa-editor-host .x-spreadsheet-table {
+  background: #ffffff;
+}
+.pa-editor-host input,
+.pa-editor-host textarea {
+  color: #1f2328;
+  background: #ffffff;
+}
 .pa-empty {
   padding: 2rem;
   text-align: center;
-  color: var(--text-muted, #8b949e);
+  color: #57606a;
   font-style: italic;
+  background: #ffffff;
 }
 
 .pa-sidebar-header .btn-secondary {
   width: 100%;
-  background: var(--bg, #0d1117);
-  color: var(--text, #e6edf3);
-  border: 1px solid var(--border, #2a3340);
+  background: #ffffff;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
   border-radius: 6px;
-  padding: 0.4rem;
+  padding: 0.45rem;
   cursor: pointer;
   font-size: 0.85rem;
+  font-weight: 500;
 }
 .pa-sidebar-header .btn-secondary:hover {
-  border-color: var(--accent, #7da5dc);
-  color: var(--accent, #7da5dc);
+  background: #0969da;
+  color: #ffffff;
+  border-color: #0969da;
 }
 

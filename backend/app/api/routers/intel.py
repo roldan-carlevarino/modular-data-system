@@ -419,11 +419,12 @@ def get_blocks_for_relations(project_id: Optional[int] = None):
                     COALESCE(
                         ARRAY_AGG(bp.project_id) FILTER (WHERE bp.project_id IS NOT NULL),
                         ARRAY[]::int[]
-                    ) AS project_ids
+                    ) AS project_ids,
+                    b.position
                 FROM knowledge_blocks b
                 LEFT JOIN knowledge_block_projects bp ON bp.block_id = b.id
                 GROUP BY b.id
-                ORDER BY b.concept_id, b.id
+                ORDER BY b.concept_id, b.position NULLS LAST, b.id
             """)
         else:
             cur.execute("""
@@ -436,7 +437,8 @@ def get_blocks_for_relations(project_id: Optional[int] = None):
                     COALESCE(
                         ARRAY_AGG(bp.project_id) FILTER (WHERE bp.project_id IS NOT NULL),
                         ARRAY[]::int[]
-                    ) AS project_ids
+                    ) AS project_ids,
+                    b.position
                 FROM knowledge_blocks b
                 LEFT JOIN knowledge_block_projects bp ON bp.block_id = b.id
                 WHERE EXISTS (
@@ -444,7 +446,7 @@ def get_blocks_for_relations(project_id: Optional[int] = None):
                     WHERE bp2.block_id = b.id AND bp2.project_id = %(project_id)s
                 )
                 GROUP BY b.id
-                ORDER BY b.concept_id, b.id
+                ORDER BY b.concept_id, b.position NULLS LAST, b.id
             """, {"project_id": project_id})
 
         rows = cur.fetchall()
@@ -455,12 +457,39 @@ def get_blocks_for_relations(project_id: Optional[int] = None):
                 "block_type": r[2],
                 "content_preview": r[3],
                 "depends_on_block_id": r[4],
-                "project_ids": list(r[5]) if r[5] else []
+                "project_ids": list(r[5]) if r[5] else [],
+                "position": r[6],
             }
             for r in rows
         ]
     except Exception as e:
         raise HTTPException(500, f"Failed to get blocks: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.post("/blocks/reorder")
+def reorder_blocks(payload: dict):
+    """Set position for a list of block ids. Body: {ordered_ids: [id1, id2, ...]}.
+    Positions are assigned 1..N in the order received."""
+    ordered_ids = payload.get("ordered_ids") or []
+    if not isinstance(ordered_ids, list) or not all(isinstance(i, int) for i in ordered_ids):
+        raise HTTPException(400, "ordered_ids must be a list of integers")
+    if not ordered_ids:
+        return {"ok": True, "updated": 0}
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+        for idx, bid in enumerate(ordered_ids, start=1):
+            cur.execute("UPDATE knowledge_blocks SET position = %s WHERE id = %s", (idx, bid))
+        conn.commit()
+        return {"ok": True, "updated": len(ordered_ids)}
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Reorder failed: {e}")
     finally:
         if cur: cur.close()
         if conn: conn.close()

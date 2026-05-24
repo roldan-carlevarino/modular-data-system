@@ -30,6 +30,7 @@ from routers.welfare import router as welfare_router
 from routers.math_trainer import router as math_trainer_router
 from routers.library import router as library_router
 from routers.careers import router as careers_router
+from routers.graph import router as graph_router
 
 
 def _run_migrations():
@@ -124,6 +125,8 @@ def _run_migrations():
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        cur.execute("ALTER TABLE lib_collection ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        cur.execute("CREATE INDEX IF NOT EXISTS lib_collection_project_idx ON lib_collection(project_id)")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lib_item_collection (
                 item_id INTEGER NOT NULL REFERENCES lib_item(id) ON DELETE CASCADE,
@@ -374,6 +377,7 @@ app.include_router(welfare_router, dependencies=_auth)
 app.include_router(math_trainer_router, dependencies=_auth)
 app.include_router(library_router, dependencies=_auth)
 app.include_router(careers_router, dependencies=_auth)
+app.include_router(graph_router, dependencies=_auth)
 
 @app.get("/")
 def root():

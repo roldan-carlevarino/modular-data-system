@@ -16,10 +16,12 @@
     const state = {
         items: [],
         collections: [],
+        projects: [],
         tags: [],
         filters: { type: '', status: '', q: '', collection_id: null, tag: null },
         selectedId: null,
         editing: null,        // null = new, otherwise existing id
+        editingCollection: null, // null = new, otherwise collection object
         importDraft: null,
     };
 
@@ -47,7 +49,13 @@
         // Top buttons
         $('libNewBtn').addEventListener('click', () => openItemModal(null));
         $('libImportBtn').addEventListener('click', openImportModal);
-        $('libNewCollectionBtn').addEventListener('click', createCollectionPrompt);
+        $('libNewCollectionBtn').addEventListener('click', () => openCollectionModal(null));
+
+        // Collection modal
+        $('libColModalClose').addEventListener('click', closeCollectionModal);
+        $('libColModalCancel').addEventListener('click', closeCollectionModal);
+        $('libColModalSave').addEventListener('click', saveCollectionModal);
+        $('libColModalDelete').addEventListener('click', deleteCollectionFromModal);
 
         // Search (debounced)
         let searchTimer = null;
@@ -111,7 +119,7 @@
     }
 
     async function refreshAll() {
-        await Promise.all([loadCollections(), loadTags(), loadStats(), loadItems()]);
+        await Promise.all([loadProjects(), loadCollections(), loadTags(), loadStats(), loadItems()]);
     }
 
     // ---- Loaders ----
@@ -135,6 +143,11 @@
         try { state.collections = await api('/library/collections'); }
         catch (e) { state.collections = []; }
         renderCollections();
+    }
+
+    async function loadProjects() {
+        try { state.projects = await api('/library/projects'); }
+        catch (e) { state.projects = []; }
     }
 
     async function loadTags() {
@@ -202,16 +215,28 @@
         const all = `<li class="library__col-item ${state.filters.collection_id === null ? 'is-active' : ''}" data-id=""><span>All items</span><em>${state.items.length}</em></li>`;
         ul.innerHTML = all + state.collections.map(c => `
             <li class="library__col-item ${state.filters.collection_id === c.id ? 'is-active' : ''}" data-id="${c.id}">
-                <span>${escapeHtml(c.name)}</span>
-                <em>${c.item_count}</em>
+                <span class="library__col-name">${escapeHtml(c.name)}${c.project_name ? `<span class="library__col-proj" title="Linked to project">· ${escapeHtml(c.project_name)}</span>` : ''}</span>
+                <span class="library__col-right">
+                    <em>${c.item_count}</em>
+                    <button type="button" class="library__col-edit" data-edit-id="${c.id}" title="Edit collection">⚙</button>
+                </span>
             </li>
         `).join('');
         ul.querySelectorAll('.library__col-item').forEach(li => {
-            li.addEventListener('click', () => {
+            li.addEventListener('click', (e) => {
+                if (e.target.closest('.library__col-edit')) return; // handled below
                 const v = li.dataset.id;
                 state.filters.collection_id = v ? parseInt(v, 10) : null;
                 renderCollections();
                 loadItems();
+            });
+        });
+        ul.querySelectorAll('.library__col-edit').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = parseInt(btn.dataset.editId, 10);
+                const col = state.collections.find(c => c.id === id);
+                if (col) openCollectionModal(col);
             });
         });
     }
@@ -615,12 +640,48 @@
     }
 
     // ---- Collections ----
-    async function createCollectionPrompt() {
-        const name = prompt('Collection name?');
-        if (!name) return;
+    function openCollectionModal(col) {
+        state.editingCollection = col || null;
+        $('libColModalTitle').textContent = col ? 'Edit collection' : 'New collection';
+        $('libColName').value = col ? (col.name || '') : '';
+        const sel = $('libColProject');
+        sel.innerHTML = '<option value="">— Not linked to a project —</option>' +
+            state.projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        sel.value = (col && col.project_id != null) ? String(col.project_id) : '';
+        $('libColModalDelete').style.display = col ? 'inline-block' : 'none';
+        $('libColModal').style.display = 'flex';
+        setTimeout(() => $('libColName').focus(), 0);
+    }
+    function closeCollectionModal() { $('libColModal').style.display = 'none'; }
+
+    async function saveCollectionModal() {
+        const name = $('libColName').value.trim();
+        if (!name) { alert('Name is required'); return; }
+        const projVal = $('libColProject').value;
+        const project_id = projVal ? parseInt(projVal, 10) : null;
         try {
-            await apiJson('/library/collections', 'POST', { name: name.trim() });
+            if (state.editingCollection) {
+                await apiJson(`/library/collections/${state.editingCollection.id}`, 'PATCH',
+                    { name, project_id });
+            } else {
+                await apiJson('/library/collections', 'POST', { name, project_id });
+            }
+            closeCollectionModal();
             await loadCollections();
+        } catch (e) { alert(e.message); }
+    }
+
+    async function deleteCollectionFromModal() {
+        if (!state.editingCollection) return;
+        if (!confirm(`Delete collection "${state.editingCollection.name}"? Items are kept; only the collection link is removed.`)) return;
+        try {
+            await api(`/library/collections/${state.editingCollection.id}`, { method: 'DELETE' });
+            closeCollectionModal();
+            if (state.filters.collection_id === state.editingCollection.id) {
+                state.filters.collection_id = null;
+            }
+            await loadCollections();
+            await loadItems();
         } catch (e) { alert(e.message); }
     }
 

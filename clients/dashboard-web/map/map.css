@@ -1,0 +1,153 @@
+/* ========================================================================
+   Knowledge Map (tab14) — Cytoscape-based graph view
+   ======================================================================== */
+
+.map-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem 1.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.map-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.map-section__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary, #e5e7eb);
+}
+
+.map-section__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.map-section__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.map-section__select,
+.map-section__btn {
+  background: var(--bg-secondary, #1f2937);
+  color: var(--text-primary, #e5e7eb);
+  border: 1px solid var(--border-color, #374151);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.map-section__btn:hover,
+.map-section__select:hover {
+  background: var(--bg-tertiary, #374151);
+  border-color: var(--accent-color, #60a5fa);
+}
+
+.map-section__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-secondary, #1f2937);
+  border: 1px solid var(--border-color, #374151);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.map-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.map-legend__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.map-canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 60vh;
+  height: calc(100vh - 260px);
+  background: var(--bg-secondary, #111827);
+  border: 1px solid var(--border-color, #374151);
+  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.map-info {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 5rem;
+  max-width: 320px;
+  background: var(--bg-secondary, #1f2937);
+  border: 1px solid var(--border-color, #374151);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.8rem;
+  color: var(--text-primary, #e5e7eb);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+}
+
+.map-info__title {
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.map-info__type {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary, #374151);
+  color: var(--text-secondary, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.map-info__row {
+  margin: 0.15rem 0;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.map-info__close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary, #9ca3af);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.map-status {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #9ca3af);
+  min-height: 1em;
+}

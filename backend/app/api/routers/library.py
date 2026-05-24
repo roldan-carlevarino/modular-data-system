@@ -101,6 +101,7 @@ def list_items(
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     collection_id: Optional[int] = Query(None),
+    project_id: Optional[int] = Query(None),
     due_before: Optional[str] = Query(None),
     due_after: Optional[str] = Query(None),
     sort: Optional[str] = Query(None, description="updated|added|due|due_asc|due_desc|title"),
@@ -134,6 +135,13 @@ def list_items(
     if collection_id is not None:
         where.append("EXISTS (SELECT 1 FROM lib_item_collection ic WHERE ic.item_id = i.id AND ic.collection_id = %s)")
         params.append(collection_id)
+    if project_id is not None:
+        where.append("""EXISTS (
+            SELECT 1 FROM lib_item_collection ic
+            JOIN lib_collection c ON c.id = ic.collection_id
+            WHERE ic.item_id = i.id AND c.project_id = %s
+        )""")
+        params.append(project_id)
     if due_before:
         d = _parse_date(due_before, "due_before")
         where.append("i.due_date IS NOT NULL AND i.due_date <= %s")
@@ -482,11 +490,25 @@ def list_collections():
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
         cur.execute("""
-            SELECT c.id, c.name, c.parent_id, c.color,
+            SELECT c.id, c.name, c.parent_id, c.color, c.project_id,
+                (SELECT name FROM projects p WHERE p.id = c.project_id) AS project_name,
                 (SELECT COUNT(*) FROM lib_item_collection ic WHERE ic.collection_id = c.id) AS item_count
             FROM lib_collection c
             ORDER BY c.name
         """)
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/projects")
+def list_projects_for_library():
+    """Lightweight project list for the library collection selector."""
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute("SELECT id, name FROM projects ORDER BY name")
         return [dict(r) for r in cur.fetchall()]
     finally:
         cur.close()
@@ -500,12 +522,13 @@ def create_collection(payload: dict):
         raise HTTPException(400, "name is required")
     parent_id = payload.get("parent_id")
     color = payload.get("color")
+    project_id = payload.get("project_id")
     conn = _conn()
     cur = conn.cursor()
     try:
         cur.execute(
-            "INSERT INTO lib_collection (name, parent_id, color) VALUES (%s, %s, %s) RETURNING id",
-            (name, parent_id, color),
+            "INSERT INTO lib_collection (name, parent_id, color, project_id) VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, parent_id, color, project_id),
         )
         new_id = cur.fetchone()[0]
         conn.commit()
@@ -518,7 +541,7 @@ def create_collection(payload: dict):
 @router.patch("/collections/{cid}")
 def update_collection(cid: int, payload: dict):
     fields, params = [], []
-    for key in ("name", "parent_id", "color"):
+    for key in ("name", "parent_id", "color", "project_id"):
         if key in payload:
             fields.append(f"{key} = %s")
             params.append(payload[key])

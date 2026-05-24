@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="math/math.css">
   <link rel="stylesheet" href="library/library.css">
   <link rel="stylesheet" href="careers/careers.css">
+  <link rel="stylesheet" href="map/map.css">
   <!-- Design refresh layer (Notion-like UI + Overleaf-like Intel). Remove this line to roll back. -->
   <link rel="stylesheet" href="core/styles/refresh.css">
 
@@ -86,6 +87,8 @@
   <script defer src="math/math.js"></script>
   <script defer src="library/library.js"></script>
   <script defer src="careers/careers.js"></script>
+  <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+  <script defer src="map/map.js"></script>
 </head>
 
 <body>
@@ -151,6 +154,7 @@
     <input type="radio" name="tab" id="tab11">
     <input type="radio" name="tab" id="tab12">
     <input type="radio" name="tab" id="tab13">
+    <input type="radio" name="tab" id="tab14">
 
     <div class="tab-labels">
       <label for="tab1">Home</label>
@@ -166,6 +170,7 @@
       <label for="tab11">Math</label>
       <label for="tab12">Library</label>
       <label for="tab13">Careers</label>
+      <label for="tab14">Map</label>
     </div>
 
     <div class="tab-content">
@@ -1504,6 +1509,33 @@
             </footer>
           </div>
         </div>
+
+        <!-- Collection modal -->
+        <div id="libColModal" class="library__modal" style="display:none">
+          <div class="library__modal-card library__modal-card--small">
+            <header class="library__modal-head">
+              <h3 id="libColModalTitle">New collection</h3>
+              <button id="libColModalClose" class="library__icon-btn">×</button>
+            </header>
+            <div class="library__modal-body">
+              <div class="library__field">
+                <label for="libColName">Name</label>
+                <input id="libColName" type="text" class="library__input" placeholder="e.g. Thesis references">
+              </div>
+              <div class="library__field">
+                <label for="libColProject">Project <span class="library__hint">(optional)</span></label>
+                <select id="libColProject" class="library__input">
+                  <option value="">— Not linked to a project —</option>
+                </select>
+              </div>
+            </div>
+            <footer class="library__modal-foot">
+              <button id="libColModalDelete" class="library__btn library__btn--ghost" style="margin-right:auto;display:none;color:#b54545">Delete</button>
+              <button id="libColModalCancel" class="library__btn library__btn--ghost">Cancel</button>
+              <button id="libColModalSave" class="library__btn library__btn--primary">Save</button>
+            </footer>
+          </div>
+        </div>
       </div>
 
       <!-- ====== TAB 13: CAREERS ====== -->
@@ -1802,6 +1834,42 @@
             </footer>
           </div>
         </div>
+      </div>
+
+      <!-- ====== TAB 14: MAP ====== -->
+      <div class="content c14">
+        <section class="map-section">
+          <header class="map-section__header">
+            <h2 class="map-section__title">Knowledge Map</h2>
+            <div class="map-section__controls">
+              <label class="map-section__filter">
+                <span>Layout</span>
+                <select id="mapLayoutSelect" class="map-section__select">
+                  <option value="cose">cose</option>
+                  <option value="concentric">concentric</option>
+                  <option value="breadthfirst">breadthfirst</option>
+                  <option value="circle">circle</option>
+                  <option value="grid">grid</option>
+                </select>
+              </label>
+              <label class="map-section__filter">
+                <span>Show</span>
+                <select id="mapTypeFilter" class="map-section__select">
+                  <option value="all">All</option>
+                  <option value="projects">Projects only</option>
+                  <option value="no-blocks">No blocks</option>
+                  <option value="no-items">No library items</option>
+                </select>
+              </label>
+              <button id="mapFitBtn" class="map-section__btn" type="button">Fit</button>
+              <button id="mapReloadBtn" class="map-section__btn" type="button">Reload</button>
+            </div>
+          </header>
+          <div class="map-section__legend" id="mapLegend"></div>
+          <div id="mapCanvas" class="map-canvas"></div>
+          <div id="mapInfo" class="map-info" style="display:none"></div>
+          <p id="mapStatus" class="map-status" aria-live="polite"></p>
+        </section>
       </div>
 
     </div>

@@ -868,6 +868,40 @@
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* Floating "+ New block" button anchored to the content area */
+.intel-fab {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--accent-color, #60a5fa);
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  z-index: 30;
+  padding: 0 0 2px 0;
+}
+
+.intel-fab:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45), 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.intel-fab:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .knowledge-viewer {

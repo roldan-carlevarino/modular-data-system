@@ -197,12 +197,13 @@
         el.hidden = false;
     }
 
-    function openModal() {
+    function openModal(forceTab) {
         buildModal();
         refreshContext();
         const state = (typeof knowledgeState !== 'undefined') ? knowledgeState : {};
         // If no concept yet, force the concept tab.
-        const startTab = state.concept_id ? activeTab : 'concept';
+        let startTab = forceTab || (state.concept_id ? activeTab : 'concept');
+        if (startTab === 'block' && !state.concept_id) startTab = 'concept';
         switchTab(startTab);
         setChosenType(chosenType);
         clearErrors();

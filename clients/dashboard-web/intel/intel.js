@@ -92,6 +92,31 @@ document.addEventListener("DOMContentLoaded", () => {
   if (searchInput) {
     searchInput.addEventListener("input", () => filterConceptTree(searchInput.value));
   }
+
+  // Floating "+ New block" button (anchored bottom-right of knowledge content)
+  const fab = document.getElementById("intelFabAddBlock");
+  if (fab) {
+    fab.addEventListener("click", () => {
+      if (typeof window.openIntelAddModal === "function") {
+        window.openIntelAddModal("block");
+      }
+    });
+  }
+
+  // Keyboard shortcut: Ctrl/Cmd+B → open "new block" modal (only when intel tab is active)
+  document.addEventListener("keydown", (e) => {
+    const isCtrlB = (e.ctrlKey || e.metaKey) && (e.key === "b" || e.key === "B");
+    if (!isCtrlB) return;
+    const intelTab = document.getElementById("tab4");
+    if (!intelTab || !intelTab.checked) return;
+    // Don't hijack when typing in an editable field
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    e.preventDefault();
+    if (typeof window.openIntelAddModal === "function") {
+      window.openIntelAddModal("block");
+    }
+  });
 });
 
 function setupKnowledgeSidebar() {

@@ -1,0 +1,64 @@
+⚡ QUICK START - EMPIEZA EN 30 SEGUNDOS
+
+## Windows (Recomendado)
+
+1. Ve a la carpeta: `dashboard_search_fund`
+2. Doble clic en `run.bat`
+3. ¡Listo! Se abrirá el dashboard en tu navegador
+
+---
+
+## macOS / Linux
+
+```bash
+cd dashboard_search_fund
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+---
+
+## ¿Qué verás?
+
+Un dashboard hermoso con:
+- 📊 Pipeline de adquisiciones (funnel de 14 etapas)
+- 📧 Efectividad de campañas de email
+- 🏭 Distribución por sector
+- 📋 Tabla detallada de cada empresa
+
+Navega entre las 4 pestañas para explorar. Todos los gráficos son interactivos.
+
+---
+
+## Requisitos
+
+- Python 3.8+ (verifica: `python --version`)
+- pip (normalmente viene con Python)
+
+---
+
+## Si algo no funciona
+
+**Error: Python no encontrado**
+- Reinstala Python desde python.org
+- Asegúrate de marcar "Add Python to PATH" durante instalación
+
+**Error: streamlit not found**
+- Abre PowerShell en la carpeta y corre:
+  ```
+  pip install streamlit pandas plotly numpy
+  ```
+
+---
+
+## Archivos importantes
+
+- `app.py` → El código del dashboard
+- `requirements.txt` → Dependencias
+- `README.md` → Documentación completa
+- `GUIA_PRESENTACION.md` → Cómo presentar el lunes
+- `RESUMEN_EJECUTIVO.md` → Overview del proyecto
+
+---
+
+¡A por ello! 🚀

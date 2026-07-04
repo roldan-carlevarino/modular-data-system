@@ -31,6 +31,7 @@ from routers.math_trainer import router as math_trainer_router
 from routers.library import router as library_router
 from routers.careers import router as careers_router
 from routers.graph import router as graph_router
+from routers.knowledge_engine import router as knowledge_engine_router, migrate as knowledge_engine_migrate
 
 
 def _run_migrations():
@@ -313,6 +314,11 @@ def _run_migrations():
 
 _run_migrations()
 
+try:
+    knowledge_engine_migrate()
+except Exception as e:
+    print(f"[migration] knowledge_engine warning: {e}")
+
 app = FastAPI()
 
 # ---- Read-only middleware for demo user ----
@@ -378,6 +384,7 @@ app.include_router(math_trainer_router, dependencies=_auth)
 app.include_router(library_router, dependencies=_auth)
 app.include_router(careers_router, dependencies=_auth)
 app.include_router(graph_router, dependencies=_auth)
+app.include_router(knowledge_engine_router, dependencies=_auth)
 
 @app.get("/")
 def root():

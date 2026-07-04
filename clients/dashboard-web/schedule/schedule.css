@@ -13,19 +13,20 @@
 
 .month-calendar-box {
   grid-area: month;
+  border-radius: var(--radius-md);
 }
 
 .tasks-box {
   grid-area: tasks;
   text-align: center;
   overflow: hidden;
+  border-radius: var(--radius-md);
 }
 
 .calendar-box {
   grid-area: calendar;
   overflow: hidden;
-
-
+  border-radius: var(--radius-md);
 }
 
 /* TASK SECTIONS */
@@ -67,19 +68,23 @@
 }
 
 .schedule-create-btn {
-  border: var(--border-thin) solid var(--border-color);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-secondary);
   border-radius: var(--radius-md);
   padding: 0.28rem 0.65rem;
+  font-family: 'Inter Tight', sans-serif;
   font-size: 0.78rem;
+  font-weight: 500;
+  box-shadow: none;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .schedule-create-btn:hover {
-  background: var(--accent-light);
-  border-color: var(--accent-primary);
+  opacity: 0.88;
+  background: var(--text-primary);
+  color: var(--bg-secondary);
 }
 
 .month-calendar-title {
@@ -101,20 +106,24 @@
 .month-calendar-nav {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
-  border: var(--border-thin) solid var(--border-color);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   line-height: 1;
-  font-size: 0.95rem;
+  font-family: 'Inter Tight', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  box-shadow: none;
   padding: 0;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .month-calendar-nav:hover {
-  background: var(--accent-light);
-  border-color: var(--accent-primary);
+  background: var(--bg-tertiary);
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
 }
 
 .month-calendar-weekdays,
@@ -138,7 +147,7 @@
 
 .month-day {
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -164,16 +173,16 @@
 }
 
 .month-day.today {
-  background: var(--accent-light);
+  background: var(--bg-tertiary);
   border-color: var(--accent-primary);
-  color: var(--accent-solid);
-  font-weight: 700;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .month-day.selected {
-  background: var(--accent-primary);
+  background: var(--text-primary);
   border-color: var(--accent-primary);
-  color: #ffffff;
+  color: var(--bg-secondary);
   font-weight: 700;
 }
 
@@ -187,7 +196,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #68d391;
+  background: var(--text-tertiary);
   bottom: 2px;
   right: 2px;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.25);
@@ -203,7 +212,7 @@
   line-height: 1;
   bottom: 1px;
   left: 2px;
-  color: #f6c343;
+  color: var(--text-secondary);
 }
 
 .month-day {
@@ -279,9 +288,9 @@
 }
 .slot-task-delete:hover {
   opacity: 1;
-  color: #ff6b6b;
-  border-color: rgba(255, 107, 107, 0.35);
-  background: rgba(255, 107, 107, 0.1);
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+  background: transparent;
 }
 
 .slot-task-star {
@@ -295,6 +304,10 @@
 .slot-task-star.active {
   opacity: 1;
   color: #f6c343;
+}
+.slot-task-star.is-featured,
+.slot-task-star.featured {
+  color: var(--text-primary);
 }
 .slot-task-star:hover {
   opacity: 1;

@@ -19,34 +19,43 @@
   flex-shrink: 0;
 }
 
-/* ---- Tabs ---- */
+/* ---- Tabs (clean text tabs with active underline) ---- */
 .rss-tabs {
   display: flex;
-  gap: 0.3rem;
+  gap: 0;
   flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .rss-tab {
-  padding: 0.35rem 0.85rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border-radius: 20px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
+  padding: 0.55rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  border-radius: 0;
+  border: none;
+  background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
   white-space: nowrap;
+  position: relative;
 }
 .rss-tab:hover {
-  background: var(--accent-light);
+  background: transparent;
   color: var(--text-primary);
-  border-color: var(--accent-primary);
 }
 .rss-tab.active {
-  background: var(--accent-primary);
-  color: var(--accent-solid);
-  border-color: var(--accent-hover);
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.rss-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0.4rem; right: 0.4rem; bottom: -1px;
+  height: 2px;
+  background: var(--text-primary);
 }
 
 /* ---- Controls ---- */
@@ -68,22 +77,27 @@
 }
 
 .rss-refresh-btn {
-  background: var(--bg-tertiary);
+  background: transparent;
   border: 1px solid var(--border-color);
-  color: var(--text-tertiary);
-  border-radius: 6px;
-  width: 28px;
-  height: 28px;
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  width: 30px;
+  height: 30px;
+  padding: 0;
   font-size: 1rem;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: background 0.15s, color 0.15s;
 }
 .rss-refresh-btn:hover {
-  background: var(--accent-light);
-  color: var(--accent-solid);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.rss-refresh-btn svg {
+  display: block;
+  color: currentColor;
 }
 
 /* ---- Feed ---- */

@@ -819,9 +819,64 @@ function xsToUniverSnapshot(legacy) {
 }
 
 let projectAttachmentsModal = null;
+
+const UNIVER_SCRIPTS = [
+  'https://unpkg.com/react@18.3.1/umd/react.production.min.js',
+  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js',
+  'https://unpkg.com/rxjs/dist/bundles/rxjs.umd.min.js',
+  'https://unpkg.com/@univerjs/presets/lib/umd/index.js',
+  'https://unpkg.com/@univerjs/preset-sheets-core/lib/umd/index.js',
+  'https://unpkg.com/@univerjs/preset-sheets-core/lib/umd/locales/en-US.js',
+  'https://unpkg.com/@univerjs/preset-sheets-data-validation/lib/umd/index.js',
+  'https://unpkg.com/@univerjs/preset-sheets-data-validation/lib/umd/locales/en-US.js',
+  'https://unpkg.com/@univerjs/preset-sheets-filter/lib/umd/index.js',
+  'https://unpkg.com/@univerjs/preset-sheets-filter/lib/umd/locales/en-US.js',
+];
+const UNIVER_STYLES = [
+  'https://unpkg.com/@univerjs/preset-sheets-core/lib/index.css',
+  'https://unpkg.com/@univerjs/preset-sheets-data-validation/lib/index.css',
+  'https://unpkg.com/@univerjs/preset-sheets-filter/lib/index.css',
+];
+
+function loadUniver() {
+  if (projectAttachmentsState.univerLoaded) return Promise.resolve();
+  if (projectAttachmentsState.univerLoading) return projectAttachmentsState.univerLoading;
+
+  // Inject CSS immediately (non-blocking)
+  UNIVER_STYLES.forEach(href => {
+    if (!document.querySelector(`link[href="${href}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = href;
+      document.head.appendChild(link);
+    }
+  });
+
+  // Load scripts sequentially (each depends on the previous)
+  const promise = UNIVER_SCRIPTS.reduce((chain, src) => {
+    return chain.then(() => new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.head.appendChild(s);
+    }));
+  }, Promise.resolve());
+
+  promise.then(() => {
+    projectAttachmentsState.univerLoaded = true;
+    projectAttachmentsState.univerLoading = null;
+  });
+
+  projectAttachmentsState.univerLoading = promise;
+  return promise;
+}
+
 let projectAttachmentsState = {
   projectId: null, projectName: '', list: [], currentId: null,
   univer: null, univerAPI: null, workbook: null, dirty: false,
+  univerLoaded: false, univerLoading: null,
 };
 
 function ensureProjectAttachmentsModal() {
@@ -962,6 +1017,15 @@ async function loadProjectAttachment(attId) {
     disposeUniverEditor();
 
     const editor = modal.querySelector('#paEditor');
+    editor.innerHTML = '<div style="padding:1rem;color:var(--text-tertiary);font-size:0.85rem">Loading editor…</div>';
+
+    try {
+      await loadUniver();
+    } catch (e) {
+      editor.innerHTML = '<p class="diagram-error" style="padding:1rem">⚠ Failed to load Univer</p>';
+      return;
+    }
+
     editor.innerHTML = '<div id="paUniverHost" class="pa-univer-host"></div>';
 
     if (typeof UniverPresets === 'undefined'

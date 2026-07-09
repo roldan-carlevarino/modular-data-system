@@ -886,6 +886,33 @@ def review_concept(concept_id: int, user: str = Depends(get_current_user)):
         conn.close()
 
 
+@router.patch("/concepts/{concept_id}/reject")
+def reject_concept(concept_id: int, user: str = Depends(get_current_user)):
+    """Reject a candidate concept (non-destructive: status -> rejected)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT status FROM kn_concept WHERE id = %s", (concept_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Concept not found")
+        _append_event(cur, f"human:{user}", "concept_rejected",
+                      payload={"concept_id": concept_id, "from": r[0], "to": "rejected"})
+        cur.execute("UPDATE kn_concept SET status = 'rejected' WHERE id = %s", (concept_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": "rejected"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Reject failed: {e}")
+    finally:
+        conn.close()
+
+
 @router.post("/concepts/{concept_id}/merge")
 def merge_concept(concept_id: int, payload: dict = Body(...), user: str = Depends(get_current_user)):
     """Merge `concept_id` INTO `into_id` (non-destructive: recorded as an event,
@@ -1144,6 +1171,59 @@ def retract_unit(unit_id: int, user: str = Depends(get_current_user)):
         conn.close()
 
 
+@router.patch("/units/{unit_id}/review")
+def review_unit(unit_id: int, user: str = Depends(get_current_user)):
+    """Accept a machine-generated unit (epistemic_status -> reviewed_human)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT epistemic_status FROM kn_knowledge_unit WHERE id = %s AND status = 'active'", (unit_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Unit not found")
+        _append_event(cur, f"human:{user}", "unit_reviewed",
+                      payload={"unit_id": unit_id, "from": r[0], "to": "reviewed_human"})
+        cur.execute("UPDATE kn_knowledge_unit SET epistemic_status = 'reviewed_human', updated_at = NOW() WHERE id = %s", (unit_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "epistemic_status": "reviewed_human"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Review unit failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.patch("/units/{unit_id}/reject")
+def reject_unit(unit_id: int, user: str = Depends(get_current_user)):
+    """Reject a candidate unit (soft-retract via a `unit_rejected` event)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT status FROM kn_knowledge_unit WHERE id = %s", (unit_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Unit not found")
+        _append_event(cur, f"human:{user}", "unit_rejected", payload={"unit_id": unit_id})
+        cur.execute("UPDATE kn_knowledge_unit SET status = 'retracted', updated_at = NOW() WHERE id = %s", (unit_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": "rejected"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Reject unit failed: {e}")
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Relations (typed edges between concepts)
 # ---------------------------------------------------------------------------
@@ -1193,6 +1273,119 @@ def assert_relation(payload: dict = Body(...), user: str = Depends(get_current_u
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, f"Assert relation failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.patch("/relations/{relation_id}/review")
+def review_relation(relation_id: int, user: str = Depends(get_current_user)):
+    """Promote a candidate relation to reviewed (the human gate)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT status FROM kn_relation WHERE id = %s", (relation_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Relation not found")
+        _append_event(cur, f"human:{user}", "relation_reviewed",
+                      payload={"relation_id": relation_id, "from": r[0], "to": "reviewed"})
+        cur.execute("UPDATE kn_relation SET status = 'reviewed' WHERE id = %s", (relation_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": "reviewed"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Review relation failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.patch("/relations/{relation_id}/reject")
+def reject_relation(relation_id: int, user: str = Depends(get_current_user)):
+    """Reject a candidate relation (non-destructive: status -> rejected)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT status FROM kn_relation WHERE id = %s", (relation_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Relation not found")
+        _append_event(cur, f"human:{user}", "relation_rejected",
+                      payload={"relation_id": relation_id, "from": r[0], "to": "rejected"})
+        cur.execute("UPDATE kn_relation SET status = 'rejected' WHERE id = %s", (relation_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": "rejected"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Reject relation failed: {e}")
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Review queue (everything a human still needs to approve/reject)
+# ---------------------------------------------------------------------------
+
+@router.get("/review/queue")
+def review_queue(limit: int = Query(100, ge=1, le=500),
+                 user: str = Depends(get_current_user)):
+    """Single pane of everything pending human review: candidate concepts,
+    candidate relations, and machine-generated units still unreviewed."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+
+        cur.execute("""
+            SELECT id, slug, name
+            FROM kn_concept
+            WHERE status = 'candidate' AND merged_into IS NULL
+            ORDER BY id LIMIT %s
+        """, (limit,))
+        concepts = [{"id": r[0], "slug": r[1], "name": r[2]} for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT r.id, r.rel_type, r.src_concept, s.name, r.dst_concept, d.name, r.confidence
+            FROM kn_relation r
+            JOIN kn_concept s ON s.id = r.src_concept
+            JOIN kn_concept d ON d.id = r.dst_concept
+            WHERE r.status = 'candidate'
+            ORDER BY r.id LIMIT %s
+        """, (limit,))
+        relations = [{"id": r[0], "rel_type": r[1], "src_id": r[2], "src": r[3],
+                      "dst_id": r[4], "dst": r[5], "confidence": r[6]} for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT u.id, u.role, u.content, u.confidence,
+                   COALESCE(array_agg(c.name) FILTER (WHERE c.id IS NOT NULL), '{}') AS concepts
+            FROM kn_knowledge_unit u
+            LEFT JOIN kn_unit_concept uc ON uc.unit_id = u.id
+            LEFT JOIN kn_concept c ON c.id = uc.concept_id
+            WHERE u.status = 'active' AND u.epistemic_status = 'generated_machine'
+            GROUP BY u.id, u.role, u.content, u.confidence
+            ORDER BY u.id LIMIT %s
+        """, (limit,))
+        units = [{"id": r[0], "role": r[1], "content": r[2], "confidence": r[3],
+                  "concepts": list(r[4])} for r in cur.fetchall()]
+
+        cur.close()
+        return {
+            "concepts": concepts,
+            "relations": relations,
+            "units": units,
+            "counts": {"concepts": len(concepts),
+                       "relations": len(relations),
+                       "units": len(units)},
+        }
     finally:
         conn.close()
 

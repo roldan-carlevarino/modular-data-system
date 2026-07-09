@@ -200,6 +200,27 @@ def _ensure_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS kn_mention_concept_idx ON kn_mention(concept_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS kn_mention_chunk_idx   ON kn_mention(chunk_id)")
 
+    # ---- Job queue (pulled by an external worker, e.g. the Mac Mini) ----
+    # The worker polls /kn/worker/claim (outbound only), runs a local LLM, and
+    # posts candidates back. Jobs are leased: a stale 'claimed' job is requeued.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kn_job (
+            id           BIGSERIAL PRIMARY KEY,
+            kind         TEXT NOT NULL DEFAULT 'extract',
+            document_id  BIGINT REFERENCES kn_document(id) ON DELETE CASCADE,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            worker_id    TEXT,
+            attempts     INTEGER NOT NULL DEFAULT 0,
+            error        TEXT,
+            result_meta  JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            claimed_at   TIMESTAMPTZ,
+            finished_at  TIMESTAMPTZ
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS kn_job_status_idx ON kn_job(status, id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS kn_job_doc_idx    ON kn_job(document_id)")
+
 
 def migrate():
     """Idempotent schema creation; called once at startup from main.py."""
@@ -368,6 +389,47 @@ def _resolve_concept(cur, concept_id):
         if row[0] is None:
             return concept_id
         concept_id = row[0]
+    return concept_id
+
+
+def _ensure_concept(cur, name, actor, generated=False, aliases=None):
+    """Get-or-create a concept by slug, returning its canonical id.
+
+    Used by the worker result handler. Machine-created concepts enter as
+    'candidate' with a `concept_generated` event, so they pass the human gate.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    slug = _slugify(name)
+    cur.execute("SELECT id FROM kn_concept WHERE slug = %s", (slug,))
+    row = cur.fetchone()
+    if row:
+        return _resolve_concept(cur, row[0])
+
+    event_type = "concept_generated" if generated else "concept_created"
+    status = "candidate" if generated else "reviewed"
+    event_id, _ = _append_event(
+        cur, actor, event_type,
+        payload={"name": name, "slug": slug, "status": status},
+        epistemic_status=("generated_machine" if generated else "asserted"),
+    )
+    cur.execute("""
+        INSERT INTO kn_concept (slug, name, status, create_event)
+        VALUES (%s, %s, %s, %s) RETURNING id
+    """, (slug, name, status, event_id))
+    concept_id = cur.fetchone()[0]
+    cur.execute("""
+        INSERT INTO kn_concept_alias (concept_id, alias, alias_norm, source)
+        VALUES (%s, %s, %s, 'canonical') ON CONFLICT DO NOTHING
+    """, (concept_id, name, _normalize(name)))
+    for al in (aliases or []):
+        al = (al or "").strip()
+        if al:
+            cur.execute("""
+                INSERT INTO kn_concept_alias (concept_id, alias, alias_norm, source)
+                VALUES (%s, %s, %s, 'generated') ON CONFLICT DO NOTHING
+            """, (concept_id, al, _normalize(al)))
     return concept_id
 
 
@@ -1185,6 +1247,314 @@ def relink_mentions(user: str = Depends(get_current_user)):
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, f"Relink failed: {e}")
+    finally:
+        conn.close()
+
+
+# ===========================================================================
+# EXTRACTION — job queue pulled by an external worker (e.g. the Mac Mini)
+# The backend never calls an LLM. It enqueues a job; the worker claims it,
+# runs a local model, and posts candidates back as `*_generated` events.
+# ===========================================================================
+
+LEASE_MINUTES = 10
+
+
+@router.post("/documents/{document_id}/extract")
+def enqueue_extract(document_id: int, user: str = Depends(get_current_user)):
+    """Enqueue an extraction job for a document (idempotent while one is live)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT id FROM kn_document WHERE id = %s", (document_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Document not found")
+
+        cur.execute("""
+            SELECT id FROM kn_job
+            WHERE document_id = %s AND kind = 'extract' AND status IN ('pending', 'claimed')
+        """, (document_id,))
+        live = cur.fetchone()
+        if live:
+            cur.close()
+            return {"job_id": live[0], "status": "already_queued"}
+
+        cur.execute("""
+            INSERT INTO kn_job (kind, document_id, status)
+            VALUES ('extract', %s, 'pending') RETURNING id
+        """, (document_id,))
+        job_id = cur.fetchone()[0]
+        _append_event(cur, f"human:{user}", "extraction_requested",
+                      payload={"job_id": job_id, "document_id": document_id})
+        conn.commit()
+        cur.close()
+        return {"job_id": job_id, "status": "pending"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Enqueue failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.get("/jobs")
+def list_jobs(status: Optional[str] = Query(None), limit: int = Query(50, ge=1, le=200)):
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        if status:
+            cur.execute("""
+                SELECT id, kind, document_id, status, attempts, error, created_at, finished_at
+                FROM kn_job WHERE status = %s ORDER BY id DESC LIMIT %s
+            """, (status, limit))
+        else:
+            cur.execute("""
+                SELECT id, kind, document_id, status, attempts, error, created_at, finished_at
+                FROM kn_job ORDER BY id DESC LIMIT %s
+            """, (limit,))
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {"id": r[0], "kind": r[1], "document_id": r[2], "status": r[3],
+             "attempts": r[4], "error": r[5],
+             "created_at": r[6].isoformat() if r[6] else None,
+             "finished_at": r[7].isoformat() if r[7] else None}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+@router.post("/worker/claim")
+def worker_claim(payload: dict = Body(default={}), user: str = Depends(get_current_user)):
+    """Worker pulls the next pending job (with a lease). Returns the job plus the
+    document's chunks so the worker has everything it needs to extract offline."""
+    worker_id = (payload.get("worker_id") or "worker").strip()
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+
+        # Requeue stale leases (crashed workers).
+        cur.execute("""
+            UPDATE kn_job SET status = 'pending', worker_id = NULL
+            WHERE status = 'claimed'
+              AND claimed_at < NOW() - INTERVAL '%s minutes'
+        """ % LEASE_MINUTES)
+
+        # Atomically claim the oldest pending job.
+        cur.execute("""
+            UPDATE kn_job
+            SET status = 'claimed', worker_id = %s, claimed_at = NOW(), attempts = attempts + 1
+            WHERE id = (
+                SELECT id FROM kn_job
+                WHERE status = 'pending'
+                ORDER BY id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, kind, document_id
+        """, (worker_id,))
+        job = cur.fetchone()
+        if not job:
+            conn.commit()
+            cur.close()
+            return {"job": None}
+
+        job_id, kind, document_id = job
+        cur.execute("SELECT title, source_type FROM kn_document WHERE id = %s", (document_id,))
+        doc = cur.fetchone()
+        cur.execute("""
+            SELECT id, ord, text FROM kn_chunk WHERE document_id = %s ORDER BY ord
+        """, (document_id,))
+        chunks = [{"chunk_id": c[0], "ord": c[1], "text": c[2]} for c in cur.fetchall()]
+
+        conn.commit()
+        cur.close()
+        return {
+            "job": {
+                "id": job_id, "kind": kind, "document_id": document_id,
+                "document_title": doc[0] if doc else None,
+                "source_type": doc[1] if doc else None,
+                "chunks": chunks,
+            }
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Claim failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/jobs/{job_id}/result")
+def worker_result(job_id: int, payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Worker posts extracted candidates. The backend writes them as
+    `*_generated` events (candidates that pass the human review gate).
+
+    Expected payload:
+      {
+        "model": "qwen2.5:14b",
+        "concepts":  [{"name": "...", "aliases": ["..."]}],
+        "relations": [{"src": "A", "dst": "B", "rel_type": "requires", "confidence": 0.8}],
+        "units":     [{"content": "...", "role": "definition",
+                       "concepts": ["A"], "confidence": 0.7, "basis_chunk_ids": [1,2]}]
+      }
+    """
+    model = (payload.get("model") or "unknown").strip()
+    concepts = payload.get("concepts") or []
+    relations = payload.get("relations") or []
+    units = payload.get("units") or []
+    actor = f"agent:extractor@{model}"
+
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+
+        cur.execute("SELECT id, document_id, status FROM kn_job WHERE id = %s", (job_id,))
+        job = cur.fetchone()
+        if not job:
+            raise HTTPException(404, "Job not found")
+        if job[2] == "done":
+            cur.close()
+            return {"ok": True, "status": "already_done"}
+
+        counts = {"concepts": 0, "relations": 0, "units": 0}
+        name_to_id = {}
+
+        # 1) Concepts (get-or-create as candidates).
+        for c in concepts:
+            name = (c.get("name") or "").strip() if isinstance(c, dict) else str(c).strip()
+            if not name:
+                continue
+            cid = _ensure_concept(cur, name, actor, generated=True,
+                                  aliases=(c.get("aliases") if isinstance(c, dict) else None))
+            if cid:
+                name_to_id[_normalize(name)] = cid
+                counts["concepts"] += 1
+
+        def _lookup(name):
+            key = _normalize(name or "")
+            if key in name_to_id:
+                return name_to_id[key]
+            # Fall back to an existing concept by slug.
+            cur.execute("SELECT id FROM kn_concept WHERE slug = %s", (_slugify(name or ""),))
+            r = cur.fetchone()
+            if r:
+                cid = _resolve_concept(cur, r[0])
+                name_to_id[key] = cid
+                return cid
+            # Create it on the fly so relations/units aren't dropped.
+            cid = _ensure_concept(cur, name, actor, generated=True)
+            if cid:
+                name_to_id[key] = cid
+            return cid
+
+        # 2) Relations (candidates).
+        for rel in relations:
+            if not isinstance(rel, dict):
+                continue
+            src = _lookup(rel.get("src"))
+            dst = _lookup(rel.get("dst"))
+            rtype = (rel.get("rel_type") or "").strip()
+            if not src or not dst or not rtype or src == dst:
+                continue
+            conf = float(rel.get("confidence", 0.6))
+            ev, _ = _append_event(cur, actor, "relation_generated",
+                                  payload={"src": src, "dst": dst, "rel_type": rtype},
+                                  basis=[{"job": job_id}], confidence=conf,
+                                  epistemic_status="generated_machine")
+            cur.execute("""
+                INSERT INTO kn_relation (src_concept, dst_concept, rel_type, confidence, status, create_event)
+                VALUES (%s, %s, %s, %s, 'candidate', %s)
+                ON CONFLICT (src_concept, dst_concept, rel_type) DO NOTHING
+            """, (src, dst, rtype, conf, ev))
+            counts["relations"] += 1
+
+        # 3) Units (machine-authored, anchored to concepts).
+        for u in units:
+            if not isinstance(u, dict):
+                continue
+            content = (u.get("content") or "").strip()
+            if not content:
+                continue
+            anchor_ids = []
+            for nm in (u.get("concepts") or []):
+                cid = _lookup(nm)
+                if cid:
+                    anchor_ids.append(cid)
+            anchor_ids = sorted(set(anchor_ids))
+            if not anchor_ids:
+                continue
+            role = (u.get("role") or "claim").strip()
+            conf = float(u.get("confidence", 0.6))
+            basis = [{"chunk_id": b} for b in (u.get("basis_chunk_ids") or [])]
+            ev, _ = _append_event(cur, actor, "unit_generated",
+                                  payload={"content": content, "role": role, "concept_ids": anchor_ids},
+                                  basis=basis, confidence=conf,
+                                  epistemic_status="generated_machine")
+            cur.execute("""
+                INSERT INTO kn_knowledge_unit
+                    (content, role, epistemic_status, confidence, create_event)
+                VALUES (%s, %s, 'generated_machine', %s, %s) RETURNING id
+            """, (content, role, conf, ev))
+            unit_id = cur.fetchone()[0]
+            for cid in anchor_ids:
+                cur.execute("""
+                    INSERT INTO kn_unit_concept (unit_id, concept_id)
+                    VALUES (%s, %s) ON CONFLICT DO NOTHING
+                """, (unit_id, cid))
+            counts["units"] += 1
+
+        cur.execute("""
+            UPDATE kn_job SET status = 'done', finished_at = NOW(), result_meta = %s::jsonb
+            WHERE id = %s
+        """, (json.dumps({"model": model, **counts}), job_id))
+
+        conn.commit()
+        cur.close()
+        return {"ok": True, "counts": counts}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Result ingestion failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/jobs/{job_id}/fail")
+def worker_fail(job_id: int, payload: dict = Body(default={}), user: str = Depends(get_current_user)):
+    """Worker reports a failure. Job is requeued (up to a few attempts) or parked."""
+    error = (payload.get("error") or "unknown")[:1000]
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT attempts FROM kn_job WHERE id = %s", (job_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Job not found")
+        new_status = "failed" if r[0] >= 3 else "pending"
+        cur.execute("""
+            UPDATE kn_job SET status = %s, worker_id = NULL, error = %s,
+                   finished_at = CASE WHEN %s = 'failed' THEN NOW() ELSE NULL END
+            WHERE id = %s
+        """, (new_status, error, new_status, job_id))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": new_status}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Fail report failed: {e}")
     finally:
         conn.close()
 

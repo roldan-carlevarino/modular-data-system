@@ -11,10 +11,14 @@ Config via environment variables:
   KN_USERNAME    Admin username for login    (required)
   KN_PASSWORD    Admin password for login    (required)
   OLLAMA_URL     Ollama base URL             (default http://localhost:11434)
-  OLLAMA_MODEL   Model tag                   (default qwen2.5:14b)
+  OLLAMA_MODEL   Model tag                   (default qwen3.5:4b)
+  OLLAMA_NUM_CTX Context window tokens       (default 4096)
   WORKER_ID      Worker identifier           (default hostname)
   POLL_INTERVAL  Seconds between empty polls (default 5)
-  MAX_CHUNKS     Max chunks per prompt       (default 12)
+  MAX_CHUNKS     Max chunks per prompt       (default 8)
+
+Tuned for an Apple Silicon (M1) Mac Mini with 8 GB unified memory: qwen3.5:4b
+at Q4 (~3.4 GB) fits in RAM without swapping, leaving headroom for the OS.
 """
 
 import json
@@ -29,10 +33,11 @@ API_BASE = os.environ.get("API_BASE", "http://localhost:8000").rstrip("/")
 KN_USERNAME = os.environ.get("KN_USERNAME", "")
 KN_PASSWORD = os.environ.get("KN_PASSWORD", "")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
 WORKER_ID = os.environ.get("WORKER_ID", socket.gethostname())
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
-MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "12"))
+MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "8"))
 
 SYSTEM_PROMPT = (
     "You extract a knowledge graph from study material. "
@@ -106,7 +111,8 @@ def run_ollama(prompt):
         "model": OLLAMA_MODEL,
         "format": "json",
         "stream": False,
-        "options": {"temperature": 0.1},
+        "keep_alive": "30m",
+        "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},

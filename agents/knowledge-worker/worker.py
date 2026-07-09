@@ -111,6 +111,7 @@ def run_ollama(prompt):
         "model": OLLAMA_MODEL,
         "format": "json",
         "stream": False,
+        "think": False,  # qwen3.5 is a thinking model; disable so content isn't empty
         "keep_alive": "30m",
         "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
         "messages": [
@@ -120,7 +121,8 @@ def run_ollama(prompt):
     }
     r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=600)
     r.raise_for_status()
-    content = r.json().get("message", {}).get("content", "")
+    msg = r.json().get("message", {})
+    content = msg.get("content", "")
     if not content:
         raise WorkerError("Empty response from Ollama")
     return json.loads(content)

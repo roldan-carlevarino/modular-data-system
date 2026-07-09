@@ -50,7 +50,16 @@ def _conn():
     return psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
 
 
+_SCHEMA_READY = False
+
+
 def _ensure_schema(cur):
+    # DDL is expensive and, run concurrently (e.g. the worker polling while an
+    # ingest happens), can deadlock on catalog locks. migrate() runs this once
+    # at startup and commits; after that every request skips it via this flag.
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
     # ---- Source of truth: the event log ----
     cur.execute("""
         CREATE TABLE IF NOT EXISTS kn_event (
@@ -220,6 +229,8 @@ def _ensure_schema(cur):
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS kn_job_status_idx ON kn_job(status, id)")
     cur.execute("CREATE INDEX IF NOT EXISTS kn_job_doc_idx    ON kn_job(document_id)")
+
+    _SCHEMA_READY = True
 
 
 def migrate():

@@ -81,9 +81,9 @@ REL_TYPE_ALIASES = {
 
 # Embeddings (Phase 3): concept dedup via pgvector cosine similarity. Vectors
 # are produced by the Mac worker (Ollama) and stored in kn_embedding. The
-# dimension is fixed by the chosen model (mxbai-embed-large -> 1024).
+# dimension is fixed by the chosen model (bge-m3 / mxbai-embed-large -> 1024).
 EMBED_DIM = 1024
-EMBED_MODEL_DEFAULT = "mxbai-embed-large"
+EMBED_MODEL_DEFAULT = "bge-m3"
 
 
 # ---------------------------------------------------------------------------

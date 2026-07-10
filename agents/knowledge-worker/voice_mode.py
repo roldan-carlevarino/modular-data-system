@@ -39,8 +39,9 @@ Config via environment variables:
   VOICE_MIN_SPEECH_MS   Min speech before endpointing (ms)  (default 300)
   CHAT_TOP_K            RAG neighbours to retrieve          (default 6)
   AUDIO_INPUT_DEVICE    Mic index/name (empty = system default)
-  SHOW_POPUP         1 to show the answer fullscreen        (default 1 on macOS)
-  POPUP_SECONDS      Seconds the pop-up stays (0 = until dismissed, default 15)
+  SHOW_POPUP         1 to serve a fullscreen answer page     (default 1 on macOS)
+  POPUP_PORT         Local port for the answer page          (default 8765)
+  POPUP_OPEN         1 to auto-open the browser once          (default 1)
   SPEAK              1 to speak answers via `say`           (default 1 on macOS)
   SPEAK_VOICE        macOS voice name                       (default system)
 """
@@ -52,6 +53,8 @@ import subprocess
 import sys
 import threading
 import time
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WAKEWORD_MODEL = os.environ.get("WAKEWORD_MODEL", "hey_jarvis")
 WAKEWORD_THRESHOLD = float(os.environ.get("WAKEWORD_THRESHOLD", "0.5"))
@@ -75,13 +78,54 @@ AUDIO_INPUT_DEVICE = (int(_dev) if _dev.lstrip("-").isdigit() else _dev) or None
 _IS_MAC = platform.system() == "Darwin"
 SPEAK = os.environ.get("SPEAK", "1" if _IS_MAC else "0") == "1"
 SPEAK_VOICE = os.environ.get("SPEAK_VOICE", "")
-# Fullscreen pop-up showing the answer text (launched as a separate process).
+# Fullscreen pop-up showing the answer text, served as a local web page (works
+# on any macOS; avoids Tkinter's macOS-version dependency). Opened once in the
+# default browser; the page polls and updates on each answer.
 SHOW_POPUP = os.environ.get("SHOW_POPUP", "1" if _IS_MAC else "0") == "1"
-_POPUP_SCRIPT = os.path.join(os.path.dirname(__file__), "display_answer.py")
+POPUP_PORT = int(os.environ.get("POPUP_PORT", "8765"))
+POPUP_OPEN = os.environ.get("POPUP_OPEN", "1") == "1"
 
 _FRAME = 1280  # openWakeWord expects 80 ms frames at 16 kHz
 _FRAME_MS = 80
 _SPEAK_CLEAN = re.compile(r"\[U\d+[^\]]*\]|📊")
+
+# Fullscreen kiosk page: dark background, huge centered text, polls /answer.
+_POPUP_HTML = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Asistente</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0f1a;color:#e8eef7;
+    font-family:-apple-system,Helvetica,Arial,sans-serif;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;padding:5vw;box-sizing:border-box;
+    text-align:center;cursor:pointer}
+  #head{color:#6ea8fe;font-size:2.4vw;letter-spacing:.35em;font-weight:700;
+    text-transform:uppercase;margin-bottom:3vh}
+  #q{color:#8a93a6;font-size:2.2vw;margin-bottom:3vh;max-width:88vw}
+  #a{font-size:4vw;line-height:1.35;font-weight:600;max-width:90vw}
+  #idle{color:#5b6472;font-size:3vw}
+  .hint{position:fixed;bottom:2vh;width:100%;text-align:center;color:#3a4150;
+    font-size:1.4vw}
+</style></head>
+<body><div id="wrap" onclick="fs()">
+  <div id="head">Asistente</div>
+  <div id="q"></div>
+  <div id="a"><span id="idle">Escuchando\u2026 di la palabra de activaci\u00f3n</span></div>
+</div>
+<div class="hint">clic para pantalla completa</div>
+<script>
+  let last=0;
+  function fs(){const e=document.documentElement;
+    if(e.requestFullscreen)e.requestFullscreen().catch(()=>{});}
+  async function poll(){try{
+    const r=await fetch('/answer',{cache:'no-store'});const d=await r.json();
+    if(d.ts&&d.ts!==last){last=d.ts;
+      document.getElementById('q').textContent=d.question||'';
+      document.getElementById('a').textContent=d.text||'';}
+  }catch(e){}finally{setTimeout(poll,800);}}
+  poll();
+</script></body></html>"""
 
 
 class VoiceMode:
@@ -95,7 +139,8 @@ class VoiceMode:
         self._history = []
         self._whisper = None
         self._stop = threading.Event()
-        self._popup_proc = None
+        self._httpd = None
+        self._popup_state = {"question": "", "text": "", "ts": 0}
         self._thread = threading.Thread(target=self._run, name="voice", daemon=True)
 
     def start(self):
@@ -118,9 +163,49 @@ class VoiceMode:
                           inference_framework=WAKEWORD_FRAMEWORK)
         print(f"[voice] wake word '{self._wake_key}' "
               f"(threshold={WAKEWORD_THRESHOLD}, whisper={WHISPER_MODEL})")
+        if SHOW_POPUP:
+            self._start_popup_server()
         self._thread.start()
 
     # -- internals ---------------------------------------------------------- #
+
+    def _start_popup_server(self):
+        """Serve the fullscreen kiosk page on localhost and open it once."""
+        state = self._popup_state
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # silence request logging
+                pass
+
+            def do_GET(self):
+                if self.path.startswith("/answer"):
+                    body = json.dumps(state).encode("utf-8")
+                    ctype = "application/json"
+                else:
+                    body = _POPUP_HTML.encode("utf-8")
+                    ctype = "text/html; charset=utf-8"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        try:
+            self._httpd = ThreadingHTTPServer(("127.0.0.1", POPUP_PORT), Handler)
+        except OSError as e:  # noqa: BLE001
+            print(f"[voice] popup server disabled (port {POPUP_PORT}: {e})",
+                  file=sys.stderr)
+            self._httpd = None
+            return
+        threading.Thread(target=self._httpd.serve_forever,
+                         name="voice-popup", daemon=True).start()
+        url = f"http://localhost:{POPUP_PORT}"
+        print(f"[voice] answer screen at {url}")
+        if POPUP_OPEN and _IS_MAC:
+            try:
+                subprocess.Popen(["open", url])
+            except Exception as e:  # noqa: BLE001
+                print(f"[voice] could not open browser: {e}", file=sys.stderr)
 
     def _load_whisper(self):
         if self._whisper is not None:
@@ -162,8 +247,11 @@ class VoiceMode:
         """Signal the listener to finish its current frame and close the audio
         stream cleanly (avoids a native segfault on Ctrl+C)."""
         self._stop.set()
-        if self._popup_proc and self._popup_proc.poll() is None:
-            self._popup_proc.terminate()
+        if self._httpd is not None:
+            try:
+                self._httpd.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
         if self._thread.is_alive():
             self._thread.join(timeout=2)
 
@@ -187,7 +275,7 @@ class VoiceMode:
                 session, question, self._history[-VOICE_HISTORY_TURNS:], CHAT_TOP_K)
             print(f"[voice] intent -> {intent}")
             print(f"[voice] Asistente: {answer}")
-            self._show_popup(answer)
+            self._show_popup(question, answer)
             self._speak(answer)
             self._history.append({"question": question, "answer": answer})
             self._history = self._history[-VOICE_HISTORY_TURNS:]
@@ -236,22 +324,12 @@ class VoiceMode:
         except Exception as e:  # noqa: BLE001
             print(f"[voice] TTS failed: {e}", file=sys.stderr)
 
-    def _show_popup(self, text):
-        """Show the answer fullscreen via the separate display process. The
-        previous pop-up (if any) is closed first."""
-        if not SHOW_POPUP:
+    def _show_popup(self, question, text):
+        """Push the latest answer to the kiosk page (the browser polls /answer)."""
+        if not SHOW_POPUP or self._httpd is None:
             return
         clean = _SPEAK_CLEAN.sub("", text).strip()
-        if not clean:
-            return
-        try:
-            if self._popup_proc and self._popup_proc.poll() is None:
-                self._popup_proc.terminate()
-            self._popup_proc = subprocess.Popen(
-                [sys.executable, _POPUP_SCRIPT],
-                stdin=subprocess.PIPE, text=True)
-            self._popup_proc.stdin.write(clean)
-            self._popup_proc.stdin.close()
-        except Exception as e:  # noqa: BLE001
-            print(f"[voice] popup failed: {e}", file=sys.stderr)
+        self._popup_state["question"] = question or ""
+        self._popup_state["text"] = clean
+        self._popup_state["ts"] = time.time()
 

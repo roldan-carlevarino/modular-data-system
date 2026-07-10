@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fullscreen native (Cocoa / PyObjC) answer display for the voice assistant.
+"""Native (Cocoa / PyObjC) answer display for the voice assistant.
 
 Runs as a SEPARATE process because macOS GUI frameworks must own the process's
 main thread, while the voice listener lives in a background thread of worker.py.
@@ -9,14 +9,16 @@ It reads newline-delimited JSON messages from STDIN, one per answer:
     {"question": "...", "text": "..."}
 
 and shows the latest one in a centred, resizable window with large centred
-text on a dark background. The process is launched once by voice_mode and
-reused; when stdin closes (worker exits) the window closes too. Press Esc /
-Cmd-Q to dismiss.
+text on a dark background. Each answer reverts to the idle message after
+POPUP_SECONDS (default 10; 0 = keep indefinitely). The process is launched
+once by voice_mode and reused; when stdin closes (worker exits) the window
+closes too. Press Esc / Cmd-Q to dismiss.
 
 Requires pyobjc (see requirements-voice.txt). Nothing here touches the network.
 """
 
 import json
+import os
 import sys
 import threading
 
@@ -53,6 +55,10 @@ ACCENT = _rgb(0x6E, 0xA8, 0xFE)
 GREY = _rgb(0x8A, 0x93, 0xA6)
 FG = _rgb(0xE8, 0xEE, 0xF7)
 
+# Seconds an answer stays on screen before reverting to the idle message
+# (0 = keep it indefinitely).
+POPUP_SECONDS = float(os.environ.get("POPUP_SECONDS", "10"))
+
 _state = {}  # holds the live NSTextField references
 
 
@@ -85,9 +91,23 @@ class KioskWindow(NSWindow):
             objc.super(KioskWindow, self).keyDown_(event)
 
 
+def _clear():
+    _state["q"].setStringValue_("")
+    _state["a"].setStringValue_("Escuchando\u2026")
+
+
 def _update(question, text):
     _state["q"].setStringValue_(question or "")
     _state["a"].setStringValue_(text or "")
+    old = _state.get("timer")
+    if old is not None:
+        old.cancel()
+    if text and POPUP_SECONDS > 0:
+        timer = threading.Timer(POPUP_SECONDS,
+                                lambda: AppHelper.callAfter(_clear))
+        timer.daemon = True
+        timer.start()
+        _state["timer"] = timer
 
 
 def _reader():

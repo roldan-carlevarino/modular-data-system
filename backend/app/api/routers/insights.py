@@ -225,6 +225,33 @@ def _schedule_summary(cur, since, period_days):
     )
     overdue = cur.fetchone()[0] or 0
 
+    # Names of today's pending tasks (grouped by occurrence, in order).
+    cur.execute(
+        """
+        SELECT t.name, o.occurrence
+        FROM task_occurrences o
+        JOIN task t ON t.id = o.task_id
+        WHERE o.date = %s AND o.completed = FALSE
+        ORDER BY o.position
+        """,
+        (today,),
+    )
+    pending_today = cur.fetchall()
+
+    # Names of overdue (incomplete, past) tasks, most recent first.
+    cur.execute(
+        """
+        SELECT t.name, o.date
+        FROM task_occurrences o
+        JOIN task t ON t.id = o.task_id
+        WHERE o.completed = FALSE AND o.date < %s
+        ORDER BY o.date DESC, o.position
+        LIMIT 10
+        """,
+        (today,),
+    )
+    overdue_tasks = cur.fetchall()
+
     # Upcoming calendar events within the window (bounded to a sensible horizon).
     horizon_days = min(period_days, 30)
     win_start = local_now().replace(tzinfo=None)
@@ -262,6 +289,13 @@ def _schedule_summary(cur, since, period_days):
         "period_total": int(period_total),
         "completion_rate": rate,
         "overdue": int(overdue),
+        "pending_today": [
+            {"title": (t[0] or "(sin título)"), "occurrence": t[1]} for t in pending_today
+        ],
+        "overdue_tasks": [
+            {"title": (t[0] or "(sin título)"), "date": t[1].isoformat() if t[1] else None}
+            for t in overdue_tasks
+        ],
         "upcoming_events": len(events),
         "horizon_days": horizon_days,
         "next_events": [
@@ -276,6 +310,9 @@ def _schedule_summary(cur, since, period_days):
             f"Hoy: {today_done} de {today_total} tareas hechas "
             f"({data['today_pending']} pendientes)."
         )
+        if pending_today:
+            names = "; ".join(t[0] or "(sin título)" for t in pending_today)
+            parts.append(f"Pendientes hoy: {names}.")
     else:
         parts.append("Hoy no tienes tareas programadas.")
     if period_total:
@@ -288,6 +325,12 @@ def _schedule_summary(cur, since, period_days):
             f"Tienes {overdue} {'tarea atrasada' if overdue == 1 else 'tareas atrasadas'} "
             "sin completar de días anteriores."
         )
+        if overdue_tasks:
+            names = "; ".join(
+                f"{t[0] or '(sin título)'} ({t[1].strftime('%d/%m') if t[1] else '?'})"
+                for t in overdue_tasks
+            )
+            parts.append(f"Atrasadas: {names}.")
     if events:
         nxt = "; ".join(
             f"{(e[0] or '(sin título)')} ({e[1].strftime('%d/%m %H:%M') if e[1] else '?'})"

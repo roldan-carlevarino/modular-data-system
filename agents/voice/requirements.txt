@@ -1,0 +1,6 @@
+# Voice assistant (Mac Mini) — local speech-to-text front-end for the chat.
+# Native dependency: PortAudio (macOS: `brew install portaudio`) before installing sounddevice.
+requests>=2.31
+numpy>=1.24
+sounddevice>=0.4.6
+faster-whisper>=1.0.0

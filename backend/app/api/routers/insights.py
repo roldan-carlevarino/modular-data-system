@@ -1,0 +1,234 @@
+"""Personal-data insights: real-time aggregate summaries of the user's own
+metrics (gym, weight, water) over a time window.
+
+These endpoints do the heavy lifting (counting, summing, comparing) in SQL so
+the chat's small local LLM never has to. The Ask worker classifies a question's
+intent, calls the matching summary here, and feeds the resulting text back to
+the model to phrase an answer grounded in real numbers.
+"""
+
+import os
+from datetime import timedelta
+
+import psycopg2
+from fastapi import APIRouter, HTTPException, Query
+
+from routers.tz import local_today
+
+router: APIRouter = APIRouter(prefix="/insights", tags=["Insights"])
+__all__ = ["router"]
+
+VALID_DOMAINS = {"gym", "weight", "water"}
+DEFAULT_PERIOD_DAYS = 30
+MAX_PERIOD_DAYS = 365
+
+
+def _get_conn():
+    return psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+
+
+def _fmt_num(n, decimals=0):
+    """Format a number without trailing noise (48500.0 -> '48500')."""
+    if n is None:
+        return "0"
+    if decimals == 0:
+        return f"{round(float(n)):,}".replace(",", ".")
+    return f"{float(n):.{decimals}f}"
+
+
+# --------------------------------------------------------------------------- #
+# Gym                                                                         #
+# --------------------------------------------------------------------------- #
+
+def _gym_summary(cur, since, period_days):
+    cur.execute(
+        "SELECT COUNT(*), MAX(date) FROM gym_log_session WHERE date >= %s",
+        (since,),
+    )
+    n_sessions, last_date = cur.fetchone()
+    n_sessions = n_sessions or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(*), COALESCE(SUM(ls.weight * ls.reps), 0)
+        FROM gym_log_set ls
+        JOIN gym_log_exercise le ON le.id = ls.exercise_log_id
+        JOIN gym_log_session s   ON s.id = le.log_session_id
+        WHERE s.date >= %s AND ls.weight IS NOT NULL AND ls.reps IS NOT NULL
+        """,
+        (since,),
+    )
+    n_sets, volume = cur.fetchone()
+
+    cur.execute(
+        """
+        SELECT re.exercise, COUNT(*) AS sets
+        FROM gym_log_set ls
+        JOIN gym_log_exercise le      ON le.id = ls.exercise_log_id
+        JOIN gym_routine_exercise re  ON re.id = le.routine_exercise_id
+        JOIN gym_log_session s        ON s.id = le.log_session_id
+        WHERE s.date >= %s
+        GROUP BY re.exercise
+        ORDER BY sets DESC
+        LIMIT 5
+        """,
+        (since,),
+    )
+    top = cur.fetchall()
+
+    data = {
+        "sessions": n_sessions,
+        "sets": n_sets or 0,
+        "volume": float(volume or 0),
+        "last_session": last_date.isoformat() if last_date else None,
+        "top_exercises": [{"exercise": r[0], "sets": r[1]} for r in top],
+    }
+
+    if n_sessions == 0:
+        return "No hay entrenamientos registrados en el periodo.", data
+
+    per_week = n_sessions / (period_days / 7.0) if period_days else n_sessions
+    days_since = (local_today() - last_date).days if last_date else None
+    parts = [
+        f"En los últimos {period_days} días has entrenado {n_sessions} "
+        f"{'vez' if n_sessions == 1 else 'veces'} "
+        f"({_fmt_num(per_week, 1)}/semana)."
+    ]
+    if last_date:
+        if days_since == 0:
+            parts.append("Última sesión: hoy.")
+        elif days_since == 1:
+            parts.append("Última sesión: ayer.")
+        else:
+            parts.append(f"Última sesión: hace {days_since} días ({last_date.isoformat()}).")
+    parts.append(
+        f"Volumen total: {_fmt_num(data['volume'])} (peso·reps) en {data['sets']} series."
+    )
+    if top:
+        ex = ", ".join(f"{r[0]} ({r[1]})" for r in top)
+        parts.append(f"Ejercicios más frecuentes (series): {ex}.")
+    return " ".join(parts), data
+
+
+# --------------------------------------------------------------------------- #
+# Weight                                                                      #
+# --------------------------------------------------------------------------- #
+
+def _weight_summary(cur, since, period_days):
+    cur.execute("SELECT weight, date FROM weight_log ORDER BY date DESC LIMIT 1")
+    latest = cur.fetchone()
+
+    cur.execute(
+        "SELECT MIN(weight), MAX(weight), AVG(weight), COUNT(*) "
+        "FROM weight_log WHERE date >= %s",
+        (since,),
+    )
+    w_min, w_max, w_avg, n = cur.fetchone()
+
+    cur.execute(
+        "SELECT weight, date FROM weight_log WHERE date >= %s ORDER BY date ASC LIMIT 1",
+        (since,),
+    )
+    earliest = cur.fetchone()
+
+    data = {
+        "current": int(latest[0]) if latest else None,
+        "current_date": latest[1].isoformat() if latest else None,
+        "min": int(w_min) if w_min is not None else None,
+        "max": int(w_max) if w_max is not None else None,
+        "avg": round(float(w_avg), 1) if w_avg is not None else None,
+        "measurements": n or 0,
+        "start": int(earliest[0]) if earliest else None,
+    }
+
+    if not latest:
+        return "No hay registros de peso.", data
+
+    parts = [f"Peso actual: {data['current']} kg (medido {data['current_date']})."]
+    if earliest and earliest[0] is not None:
+        delta = data["current"] - int(earliest[0])
+        sign = "+" if delta > 0 else ""
+        parts.append(
+            f"Hace {period_days} días: {int(earliest[0])} kg "
+            f"({sign}{delta} kg en el periodo)."
+        )
+    if w_min is not None and n:
+        parts.append(
+            f"Rango: {int(w_min)}–{int(w_max)} kg, media {_fmt_num(w_avg, 1)} kg, "
+            f"{n} {'medición' if n == 1 else 'mediciones'}."
+        )
+    return " ".join(parts), data
+
+
+# --------------------------------------------------------------------------- #
+# Water                                                                       #
+# --------------------------------------------------------------------------- #
+
+def _water_summary(cur, since, period_days):
+    today = local_today()
+    cur.execute(
+        "SELECT AVG(water), COUNT(*), MAX(water) "
+        "FROM water_day WHERE date >= %s AND water > 0",
+        (since,),
+    )
+    avg, days, mx = cur.fetchone()
+
+    cur.execute("SELECT COALESCE(water, 0) FROM water_day WHERE date = %s", (today,))
+    row = cur.fetchone()
+    today_val = int(row[0]) if row else 0
+
+    data = {
+        "avg_per_day": round(float(avg), 0) if avg is not None else 0,
+        "days_logged": days or 0,
+        "max": int(mx) if mx is not None else 0,
+        "today": today_val,
+    }
+
+    if not days:
+        return f"No hay registros de agua en el periodo. Hoy: {today_val}.", data
+
+    parts = [
+        f"Agua: media de {_fmt_num(avg)} por día en los últimos {period_days} días "
+        f"({days} {'día' if days == 1 else 'días'} registrados)."
+    ]
+    parts.append(f"Hoy llevas {today_val}. Máximo del periodo: {int(mx)}.")
+    return " ".join(parts), data
+
+
+_DISPATCH = {
+    "gym": _gym_summary,
+    "weight": _weight_summary,
+    "water": _water_summary,
+}
+
+
+@router.get("/summary")
+def personal_summary(
+    domain: str = Query(..., description="One of: gym, weight, water"),
+    period_days: int = Query(DEFAULT_PERIOD_DAYS, ge=1, le=MAX_PERIOD_DAYS),
+):
+    """Return a real-time aggregate summary of a personal-data domain over the
+    last `period_days`. `summary` is a ready-to-read text; `data` is structured."""
+    domain = (domain or "").strip().lower()
+    if domain not in VALID_DOMAINS:
+        raise HTTPException(400, f"domain must be one of {sorted(VALID_DOMAINS)}")
+
+    since = local_today() - timedelta(days=period_days)
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        summary, data = _DISPATCH[domain](cur, since, period_days)
+        cur.close()
+        return {
+            "domain": domain,
+            "period_days": period_days,
+            "since": since.isoformat(),
+            "summary": summary,
+            "data": data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"insights/{domain} failed: {e}")
+    finally:
+        conn.close()

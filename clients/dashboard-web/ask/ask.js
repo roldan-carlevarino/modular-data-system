@@ -198,6 +198,15 @@ function renderAskMessage(m, i) {
 function renderAskCitations(context) {
   if (!Array.isArray(context) || context.length === 0) return "";
   const chips = context.map((u) => {
+    // Personal-metric answers carry a live-data summary, not a unit citation.
+    if (u.kind === "personal") {
+      return `<div class="ask-cite ask-cite--data">
+        <span class="ask-cite-data-tag">📊 ${escapeHtml(labelPersonalDomain(u.domain))}${
+          u.period_days ? ` · ${u.period_days}d` : ""
+        }</span>
+        <span class="ask-cite-text">${escapeHtml(u.summary || "")}</span>
+      </div>`;
+    }
     const sim = typeof u.similarity === "number"
       ? ` <span class="ask-cite-sim">${(u.similarity * 100).toFixed(0)}%</span>`
       : "";
@@ -212,6 +221,10 @@ function renderAskCitations(context) {
     <summary>${context.length} source${context.length === 1 ? "" : "s"}</summary>
     ${chips}
   </details>`;
+}
+
+function labelPersonalDomain(domain) {
+  return { gym: "Entrenamientos", weight: "Peso", water: "Agua" }[domain] || "Datos";
 }
 
 // Objectivity badge: distinguishes a verifiable fact from a subjective opinion.

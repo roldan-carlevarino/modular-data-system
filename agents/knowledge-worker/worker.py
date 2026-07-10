@@ -125,6 +125,11 @@ def build_prompt(job):
 
 def run_ollama(prompt):
     """Call the local Ollama chat endpoint with JSON-formatted output."""
+    return _run_ollama_json(SYSTEM_PROMPT, prompt)
+
+
+def _run_ollama_json(system, prompt):
+    """Ollama chat with strict JSON output and a custom system prompt."""
     payload = {
         "model": OLLAMA_MODEL,
         "format": "json",
@@ -133,7 +138,7 @@ def run_ollama(prompt):
         "keep_alive": "30m",
         "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
     }
@@ -291,9 +296,74 @@ def _factuality_label(f):
     return {"fact": "hecho", "opinion": "opinion"}.get(f, "sin clasificar")
 
 
+# Intent router: decides whether a question is about the user's own tracked
+# metrics (answered with live SQL aggregates) or general knowledge (answered via
+# RAG). qwen only has to pick from a closed menu + a period — no free-form tools.
+ROUTER_SYSTEM_PROMPT = (
+    "Clasificas la intencion de una pregunta de un asistente personal. "
+    "Devuelve SOLO JSON con esta forma exacta:\n"
+    '{"mode": "personal" | "knowledge", "domain": "gym" | "weight" | "water" | null, '
+    '"period_days": number | null}\n'
+    "Reglas:\n"
+    "- mode='personal' SOLO si la pregunta es sobre los datos propios del usuario "
+    "que se registran: entrenamientos/gimnasio (gym), peso corporal (weight), o "
+    "consumo de agua (water). Ejemplos: 'como llevo los entrenamientos', 'cuanto "
+    "peso', 'he bebido suficiente agua esta semana'.\n"
+    "- Si no encaja EXACTAMENTE en gym/weight/water, mode='knowledge' y domain=null "
+    "(preguntas de conocimiento, conceptos, documentos, etc.).\n"
+    "- period_days: interpreta expresiones temporales. hoy=1, esta semana=7, "
+    "este mes=30, ultimamente/reciente=30, este año=365. Si no se especifica, usa 30.\n"
+    "- Responde SOLO el objeto JSON."
+)
+
+PERSONAL_SYSTEM_PROMPT = (
+    "Eres un asistente personal que responde sobre los datos propios del usuario. "
+    "Usa EXCLUSIVAMENTE los DATOS proporcionados (ya son cifras reales agregadas de "
+    "su base de datos). No inventes numeros ni tendencias que no aparezcan. "
+    "Responde en el mismo idioma que la pregunta, de forma breve, concreta y "
+    "cercana, resaltando lo mas relevante. Si los datos indican que no hay "
+    "registros, dilo con naturalidad."
+)
+
+# gym/weight/water are the only intents the summary endpoint understands.
+PERSONAL_DOMAINS = {"gym", "weight", "water"}
+
+
+def classify_intent(question):
+    """Return {mode, domain, period_days}. Falls back to knowledge on any doubt."""
+    try:
+        out = _run_ollama_json(ROUTER_SYSTEM_PROMPT, f"PREGUNTA: {question}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[router] classify failed, defaulting to knowledge: {e}")
+        return {"mode": "knowledge", "domain": None, "period_days": 30}
+    mode = out.get("mode")
+    domain = out.get("domain")
+    period = out.get("period_days")
+    if mode != "personal" or domain not in PERSONAL_DOMAINS:
+        return {"mode": "knowledge", "domain": None, "period_days": 30}
+    try:
+        period = int(period)
+    except (TypeError, ValueError):
+        period = 30
+    period = max(1, min(period, 365))
+    return {"mode": "personal", "domain": domain, "period_days": period}
+
+
+def fetch_personal_summary(session, domain, period_days):
+    """GET the real-time aggregate summary for a personal-data domain."""
+    r = session.get(
+        f"{API_BASE}/insights/summary",
+        params={"domain": domain, "period_days": period_days},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def process_chat(session):
-    """Answer one queued chat turn via RAG: embed question -> vector search ->
-    generate a grounded answer. Returns True if a turn was handled."""
+    """Answer one queued chat turn. Personal-metric questions are answered from
+    live SQL aggregates; everything else via RAG. Returns True if a turn was
+    handled."""
     chat = claim_chat(session)
     if not chat:
         return False
@@ -302,32 +372,11 @@ def process_chat(session):
     top_k = chat.get("top_k") or 6
     print(f"[chat {chat_id}] {question!r}")
     try:
-        qvec = run_embeddings([question])[0]
-        sr = session.post(
-            f"{API_BASE}/kn/search",
-            json={"model": EMBED_MODEL, "vec": qvec,
-                  "target_kind": "unit", "limit": top_k},
-            timeout=60,
-        )
-        sr.raise_for_status()
-        results = sr.json().get("results") or []
-        if results:
-            context_txt = "\n".join(
-                f"[U{u['ref_id']}] ({_factuality_label(u.get('factuality'))}) {u['text']}"
-                for u in results
-            )
+        intent = classify_intent(question)
+        if intent["mode"] == "personal":
+            _answer_personal(session, chat_id, question, intent)
         else:
-            context_txt = "(no hay fragmentos relevantes)"
-        user_msg = f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
-        answer = run_ollama_text(CHAT_SYSTEM_PROMPT, user_msg)
-        rr = session.post(
-            f"{API_BASE}/kn/worker/chat/result",
-            json={"chat_id": chat_id, "answer": answer,
-                  "context": results, "model": OLLAMA_MODEL},
-            timeout=60,
-        )
-        rr.raise_for_status()
-        print(f"[chat {chat_id}] answered ({len(results)} units)")
+            _answer_knowledge(session, chat_id, question, top_k)
     except Exception as e:  # noqa: BLE001
         print(f"[chat {chat_id}] failed: {e}")
         try:
@@ -339,6 +388,58 @@ def process_chat(session):
         except Exception as e2:  # noqa: BLE001
             print(f"[warn] could not report chat failure {chat_id}: {e2}")
     return True
+
+
+def _answer_personal(session, chat_id, question, intent):
+    """Answer a question about the user's own metrics from live aggregates."""
+    domain = intent["domain"]
+    period = intent["period_days"]
+    summ = fetch_personal_summary(session, domain, period)
+    user_msg = (
+        f"DATOS ({domain}, ultimos {period} dias):\n{summ.get('summary', '')}\n\n"
+        f"PREGUNTA: {question}"
+    )
+    answer = run_ollama_text(PERSONAL_SYSTEM_PROMPT, user_msg)
+    ctx = [{"kind": "personal", "domain": domain, "period_days": period,
+            "summary": summ.get("summary", ""), "data": summ.get("data")}]
+    rr = session.post(
+        f"{API_BASE}/kn/worker/chat/result",
+        json={"chat_id": chat_id, "answer": answer,
+              "context": ctx, "model": OLLAMA_MODEL},
+        timeout=60,
+    )
+    rr.raise_for_status()
+    print(f"[chat {chat_id}] answered (personal:{domain}/{period}d)")
+
+
+def _answer_knowledge(session, chat_id, question, top_k):
+    """Answer a general-knowledge question via RAG over the knowledge base."""
+    qvec = run_embeddings([question])[0]
+    sr = session.post(
+        f"{API_BASE}/kn/search",
+        json={"model": EMBED_MODEL, "vec": qvec,
+              "target_kind": "unit", "limit": top_k},
+        timeout=60,
+    )
+    sr.raise_for_status()
+    results = sr.json().get("results") or []
+    if results:
+        context_txt = "\n".join(
+            f"[U{u['ref_id']}] ({_factuality_label(u.get('factuality'))}) {u['text']}"
+            for u in results
+        )
+    else:
+        context_txt = "(no hay fragmentos relevantes)"
+    user_msg = f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
+    answer = run_ollama_text(CHAT_SYSTEM_PROMPT, user_msg)
+    rr = session.post(
+        f"{API_BASE}/kn/worker/chat/result",
+        json={"chat_id": chat_id, "answer": answer,
+              "context": results, "model": OLLAMA_MODEL},
+        timeout=60,
+    )
+    rr.raise_for_status()
+    print(f"[chat {chat_id}] answered ({len(results)} units)")
 
 
 def main():

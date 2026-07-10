@@ -31,6 +31,7 @@ from routers.math_trainer import router as math_trainer_router
 from routers.library import router as library_router
 from routers.careers import router as careers_router
 from routers.graph import router as graph_router
+from routers.insights import router as insights_router
 from routers.knowledge_engine import router as knowledge_engine_router, migrate as knowledge_engine_migrate
 
 
@@ -384,6 +385,7 @@ app.include_router(math_trainer_router, dependencies=_auth)
 app.include_router(library_router, dependencies=_auth)
 app.include_router(careers_router, dependencies=_auth)
 app.include_router(graph_router, dependencies=_auth)
+app.include_router(insights_router, dependencies=_auth)
 app.include_router(knowledge_engine_router, dependencies=_auth)
 
 @app.get("/")

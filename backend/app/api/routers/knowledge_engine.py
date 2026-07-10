@@ -41,6 +41,44 @@ CHUNK_OVERLAP_CHARS = 100
 
 VALID_SOURCE_TYPES = {"note", "pdf", "obsidian", "transcript", "slides", "paper", "book"}
 
+# Closed vocabulary for relation types. The extractor is instructed to emit only
+# these; anything else is normalized on write (synonyms mapped, unknowns ->
+# 'related_to') so the graph stays consistent and language-agnostic.
+REL_TYPES = {
+    "is_a", "part_of", "has_part", "requires", "causes", "produces",
+    "enables", "defined_by", "example_of", "contradicts", "related_to",
+}
+REL_TYPE_ALIASES = {
+    # English synonyms
+    "isa": "is_a", "type_of": "is_a", "kind_of": "is_a", "subclass_of": "is_a",
+    "instance_of": "is_a",
+    "belongs_to": "part_of", "component_of": "part_of", "member_of": "part_of",
+    "contains": "has_part", "includes": "has_part",
+    "needs": "requires", "depends_on": "requires", "uses": "requires",
+    "cause": "causes", "leads_to": "causes", "results_in": "causes",
+    "converts_to": "produces", "generates": "produces", "creates": "produces",
+    "forms": "produces", "yields": "produces",
+    "allows": "enables",
+    "defines": "defined_by", "definition_of": "defined_by",
+    "example": "example_of", "instance": "example_of",
+    "opposes": "contradicts",
+    "related": "related_to", "relates_to": "related_to", "associated_with": "related_to",
+    # Spanish (extractor sometimes ignores the English-only instruction)
+    "es_un": "is_a", "es_una": "is_a", "tipo_de": "is_a",
+    "parte_de": "part_of", "pertenece_a": "part_of",
+    "contiene": "has_part",
+    "requiere": "requires", "necesita": "requires", "usa": "requires",
+    "depende_de": "requires", "absorbe": "requires",
+    "causa": "causes", "provoca": "causes",
+    "convierte_en": "produces", "converte_en": "produces", "produce": "produces",
+    "fija": "produces", "genera": "produces", "forma": "produces",
+    "permite": "enables",
+    "define": "defined_by",
+    "ejemplo_de": "example_of",
+    "contradice": "contradicts",
+    "relacionado_con": "related_to",
+}
+
 
 # ---------------------------------------------------------------------------
 # Connection + schema
@@ -264,6 +302,18 @@ def _slugify(name: str) -> str:
     norm = _normalize(name)
     slug = re.sub(r"[^a-z0-9]+", "-", norm).strip("-")
     return slug or "concept"
+
+
+def _canonical_rel_type(raw: str) -> str:
+    """Map any relation label onto the closed vocabulary.
+
+    Lowercases, collapses spaces/hyphens to underscores, resolves synonyms.
+    Unknown labels fall back to 'related_to' so no edge is silently dropped.
+    """
+    key = re.sub(r"[\s-]+", "_", (raw or "").strip().lower())
+    if key in REL_TYPES:
+        return key
+    return REL_TYPE_ALIASES.get(key, "related_to")
 
 
 def _chunk_text(text: str):
@@ -1234,11 +1284,17 @@ def assert_relation(payload: dict = Body(...), user: str = Depends(get_current_u
     confidence, not a hard truth). Recorded as a `relation_asserted` event."""
     src = payload.get("src_concept_id")
     dst = payload.get("dst_concept_id")
-    rel_type = (payload.get("rel_type") or "").strip()
+    rel_type_raw = (payload.get("rel_type") or "").strip()
     confidence = float(payload.get("confidence") if payload.get("confidence") is not None else 1.0)
     status = (payload.get("status") or "candidate").strip()
-    if not src or not dst or not rel_type:
+    if not src or not dst or not rel_type_raw:
         raise HTTPException(400, "src_concept_id, dst_concept_id and rel_type are required")
+    # Enforce the closed vocabulary: synonyms are mapped, unknown labels are
+    # rejected so a human can't silently pollute the graph.
+    _key = re.sub(r"[\s-]+", "_", rel_type_raw.lower())
+    rel_type = _key if _key in REL_TYPES else REL_TYPE_ALIASES.get(_key)
+    if rel_type is None:
+        raise HTTPException(400, f"Invalid rel_type '{rel_type_raw}'. Allowed: {sorted(REL_TYPES)}")
     if int(src) == int(dst):
         raise HTTPException(400, "A relation must connect two different concepts")
 
@@ -1664,12 +1720,14 @@ def worker_result(job_id: int, payload: dict = Body(...), user: str = Depends(ge
                 continue
             src = _lookup(rel.get("src"))
             dst = _lookup(rel.get("dst"))
-            rtype = (rel.get("rel_type") or "").strip()
-            if not src or not dst or not rtype or src == dst:
+            raw_rtype = (rel.get("rel_type") or "").strip()
+            if not src or not dst or not raw_rtype or src == dst:
                 continue
+            rtype = _canonical_rel_type(raw_rtype)
             conf = float(rel.get("confidence", 0.6))
             ev, _ = _append_event(cur, actor, "relation_generated",
-                                  payload={"src": src, "dst": dst, "rel_type": rtype},
+                                  payload={"src": src, "dst": dst, "rel_type": rtype,
+                                           "rel_type_raw": raw_rtype},
                                   basis=[{"job": job_id}], confidence=conf,
                                   epistemic_status="generated_machine")
             cur.execute("""

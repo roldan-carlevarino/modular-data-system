@@ -224,7 +224,7 @@ function renderAskCitations(context) {
 }
 
 function labelPersonalDomain(domain) {
-  return { gym: "Entrenamientos", weight: "Peso", water: "Agua" }[domain] || "Datos";
+  return { gym: "Entrenamientos", weight: "Peso", water: "Agua", schedule: "Agenda" }[domain] || "Datos";
 }
 
 // Objectivity badge: distinguishes a verifiable fact from a subjective opinion.

@@ -302,15 +302,17 @@ def _factuality_label(f):
 ROUTER_SYSTEM_PROMPT = (
     "Clasificas la intencion de una pregunta de un asistente personal. "
     "Devuelve SOLO JSON con esta forma exacta:\n"
-    '{"mode": "personal" | "knowledge", "domain": "gym" | "weight" | "water" | null, '
+    '{"mode": "personal" | "knowledge", "domain": "gym" | "weight" | "water" | "schedule" | null, '
     '"period_days": number | null}\n'
     "Reglas:\n"
     "- mode='personal' SOLO si la pregunta es sobre los datos propios del usuario "
-    "que se registran: entrenamientos/gimnasio (gym), peso corporal (weight), o "
-    "consumo de agua (water). Ejemplos: 'como llevo los entrenamientos', 'cuanto "
-    "peso', 'he bebido suficiente agua esta semana'.\n"
-    "- Si no encaja EXACTAMENTE en gym/weight/water, mode='knowledge' y domain=null "
-    "(preguntas de conocimiento, conceptos, documentos, etc.).\n"
+    "que se registran: entrenamientos/gimnasio (gym), peso corporal (weight), "
+    "consumo de agua (water), o su agenda: tareas/to-do y eventos del calendario "
+    "(schedule). Ejemplos: 'como llevo los entrenamientos', 'cuanto peso', "
+    "'he bebido suficiente agua esta semana', 'que tareas tengo pendientes', "
+    "'que tengo en el calendario esta semana', 'como llevo las tareas'.\n"
+    "- Si no encaja EXACTAMENTE en gym/weight/water/schedule, mode='knowledge' y "
+    "domain=null (preguntas de conocimiento, conceptos, documentos, etc.).\n"
     "- period_days: interpreta expresiones temporales. hoy=1, esta semana=7, "
     "este mes=30, ultimamente/reciente=30, este año=365. Si no se especifica, usa 30.\n"
     "- Responde SOLO el objeto JSON."
@@ -325,8 +327,8 @@ PERSONAL_SYSTEM_PROMPT = (
     "registros, dilo con naturalidad."
 )
 
-# gym/weight/water are the only intents the summary endpoint understands.
-PERSONAL_DOMAINS = {"gym", "weight", "water"}
+# gym/weight/water/schedule are the only intents the summary endpoint understands.
+PERSONAL_DOMAINS = {"gym", "weight", "water", "schedule"}
 
 
 def classify_intent(question):

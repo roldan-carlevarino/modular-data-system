@@ -1,5 +1,5 @@
 """Personal-data insights: real-time aggregate summaries of the user's own
-metrics (gym, weight, water) over a time window.
+metrics (gym, weight, water, schedule) over a time window.
 
 These endpoints do the heavy lifting (counting, summing, comparing) in SQL so
 the chat's small local LLM never has to. The Ask worker classifies a question's
@@ -13,12 +13,12 @@ from datetime import timedelta
 import psycopg2
 from fastapi import APIRouter, HTTPException, Query
 
-from routers.tz import local_today
+from routers.tz import local_now, local_today
 
 router: APIRouter = APIRouter(prefix="/insights", tags=["Insights"])
 __all__ = ["router"]
 
-VALID_DOMAINS = {"gym", "weight", "water"}
+VALID_DOMAINS = {"gym", "weight", "water", "schedule"}
 DEFAULT_PERIOD_DAYS = 30
 MAX_PERIOD_DAYS = 365
 
@@ -195,16 +195,123 @@ def _water_summary(cur, since, period_days):
     return " ".join(parts), data
 
 
+# --------------------------------------------------------------------------- #
+# Schedule (tasks + calendar)                                                 #
+# --------------------------------------------------------------------------- #
+
+def _schedule_summary(cur, since, period_days):
+    today = local_today()
+
+    # Today's task occurrences: done vs pending.
+    cur.execute(
+        "SELECT COALESCE(SUM(CASE WHEN completed THEN 1 ELSE 0 END), 0), COUNT(*) "
+        "FROM task_occurrences WHERE date = %s",
+        (today,),
+    )
+    today_done, today_total = cur.fetchone()
+
+    # Completion over the period.
+    cur.execute(
+        "SELECT COALESCE(SUM(CASE WHEN completed THEN 1 ELSE 0 END), 0), COUNT(*) "
+        "FROM task_occurrences WHERE date >= %s AND date <= %s",
+        (since, today),
+    )
+    period_done, period_total = cur.fetchone()
+
+    # Overdue: incomplete occurrences dated before today.
+    cur.execute(
+        "SELECT COUNT(*) FROM task_occurrences WHERE completed = FALSE AND date < %s",
+        (today,),
+    )
+    overdue = cur.fetchone()[0] or 0
+
+    # Upcoming calendar events within the window (bounded to a sensible horizon).
+    horizon_days = min(period_days, 30)
+    win_start = local_now().replace(tzinfo=None)
+    win_end = win_start + timedelta(days=horizon_days)
+    cur.execute(
+        """
+        SELECT
+            ci.title,
+            COALESCE(
+                ci.start_time,
+                cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+            ) AS ev_start
+        FROM calendar_item ci
+        LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+        WHERE COALESCE(
+                ci.start_time,
+                cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+              ) >= %s
+          AND COALESCE(
+                ci.start_time,
+                cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+              ) < %s
+        ORDER BY ev_start ASC
+        """,
+        (win_start, win_end),
+    )
+    events = cur.fetchall()
+
+    rate = round(100.0 * period_done / period_total) if period_total else None
+    data = {
+        "today_done": int(today_done),
+        "today_total": int(today_total),
+        "today_pending": int(today_total) - int(today_done),
+        "period_done": int(period_done),
+        "period_total": int(period_total),
+        "completion_rate": rate,
+        "overdue": int(overdue),
+        "upcoming_events": len(events),
+        "horizon_days": horizon_days,
+        "next_events": [
+            {"title": (e[0] or "(sin título)"), "start": e[1].isoformat() if e[1] else None}
+            for e in events[:5]
+        ],
+    }
+
+    parts = []
+    if today_total:
+        parts.append(
+            f"Hoy: {today_done} de {today_total} tareas hechas "
+            f"({data['today_pending']} pendientes)."
+        )
+    else:
+        parts.append("Hoy no tienes tareas programadas.")
+    if period_total:
+        parts.append(
+            f"En los últimos {period_days} días has completado {period_done} de "
+            f"{period_total} tareas ({rate}%)."
+        )
+    if overdue:
+        parts.append(
+            f"Tienes {overdue} {'tarea atrasada' if overdue == 1 else 'tareas atrasadas'} "
+            "sin completar de días anteriores."
+        )
+    if events:
+        nxt = "; ".join(
+            f"{(e[0] or '(sin título)')} ({e[1].strftime('%d/%m %H:%M') if e[1] else '?'})"
+            for e in events[:5]
+        )
+        parts.append(
+            f"Próximos {len(events)} eventos ({horizon_days} días): {nxt}."
+        )
+    else:
+        parts.append(f"No hay eventos en los próximos {horizon_days} días.")
+    return " ".join(parts), data
+
+
 _DISPATCH = {
     "gym": _gym_summary,
     "weight": _weight_summary,
     "water": _water_summary,
+    "schedule": _schedule_summary,
 }
 
 
 @router.get("/summary")
 def personal_summary(
-    domain: str = Query(..., description="One of: gym, weight, water"),
+    domain: str = Query(..., description="One of: gym, weight, water, schedule"),
     period_days: int = Query(DEFAULT_PERIOD_DAYS, ge=1, le=MAX_PERIOD_DAYS),
 ):
     """Return a real-time aggregate summary of a personal-data domain over the

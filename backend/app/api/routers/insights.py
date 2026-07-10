@@ -19,7 +19,8 @@ from routers.tz import local_now, local_today
 router: APIRouter = APIRouter(prefix="/insights", tags=["Insights"])
 __all__ = ["router"]
 
-VALID_DOMAINS = {"gym", "weight", "water", "schedule", "focus", "math", "mental"}
+VALID_DOMAINS = {"gym", "weight", "water", "schedule", "focus", "math", "mental",
+                 "menu", "careers", "rss"}
 DEFAULT_PERIOD_DAYS = 30
 MAX_PERIOD_DAYS = 365
 
@@ -34,6 +35,9 @@ _DOMAIN_PATTERNS = [
     ("focus", r"pomodoro|foco|enfoc|concentra|estudi|productiv"),
     ("math", r"\bmate|matem|c[aá]lculo|n[uú]meros|aritm|c[aá]lcul"),
     ("mental", r"bienestar|[aá]nimo|sue[nñ]o|dormi|estr[eé]s|humor|descans"),
+    ("menu", r"men[uú]|comer|comida|cena|desayun|almuerz|\bplato\b|dieta|receta"),
+    ("careers", r"carrera|solicitud|aplicaci|empleo|\btrabajo\b|beca|entrevista|oferta|puesto|vacante|deadline|internship|\bphd\b"),
+    ("rss", r"noticia|\brss\b|art[ií]culo|\bpaper|feed|novedad|actualidad|prensa|\bleer\b"),
 ]
 
 # Temporal expressions -> period in days. First match wins; default 30.
@@ -558,6 +562,207 @@ def _mental_summary(cur, since, period_days):
     return " ".join(parts), data
 
 
+# --------------------------------------------------------------------------- #
+# Menu / meals                                                                #
+# --------------------------------------------------------------------------- #
+
+_OCC_ORDER = "CASE occurrence WHEN 'morning' THEN 0 WHEN 'afternoon' THEN 1 WHEN 'evening' THEN 2 ELSE 3 END"
+_OCC_LABEL = {"morning": "mañana", "afternoon": "mediodía", "evening": "noche"}
+_WEEKDAY_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def _menu_summary(cur, since, period_days):
+    today = local_today()
+    weekday = today.weekday()
+
+    cur.execute(
+        f"""
+        SELECT name, occurrence
+        FROM calories_menu
+        WHERE weekday = %s
+        ORDER BY {_OCC_ORDER}
+        """,
+        (weekday,),
+    )
+    meals = cur.fetchall()
+
+    cur.execute(
+        "SELECT occurrence, completed FROM calories_mealtrack WHERE date = %s",
+        (today,),
+    )
+    done = {occ: bool(c) for occ, c in cur.fetchall()}
+
+    meal_list = [
+        {
+            "occurrence": occ,
+            "label": _OCC_LABEL.get(occ, occ),
+            "name": name,
+            "completed": done.get(occ, False),
+        }
+        for name, occ in meals
+    ]
+    completed_count = sum(1 for m in meal_list if m["completed"])
+    data = {
+        "weekday": _WEEKDAY_ES[weekday],
+        "meals": meal_list,
+        "completed": completed_count,
+        "total": len(meal_list),
+    }
+
+    if not meal_list:
+        return f"No hay menú definido para hoy ({_WEEKDAY_ES[weekday]}).", data
+
+    items = ", ".join(f"{m['label']}: {m['name']}" for m in meal_list)
+    text = f"Menú de hoy ({_WEEKDAY_ES[weekday]}) — {items}."
+    text += f" Llevas {completed_count}/{len(meal_list)} comidas registradas."
+    return text, data
+
+
+# --------------------------------------------------------------------------- #
+# Careers / job pipeline                                                       #
+# --------------------------------------------------------------------------- #
+
+_CAREERS_ACTIVE = ("saved", "applied", "oa", "phone", "onsite", "offer")
+
+
+def _careers_summary(cur, since, period_days):
+    cur.execute(
+        """
+        SELECT status, COUNT(*)
+        FROM career_application
+        WHERE status = ANY(%s)
+        GROUP BY status
+        """,
+        (list(_CAREERS_ACTIVE),),
+    )
+    by_status = {s: n for s, n in cur.fetchall()}
+    active_total = sum(by_status.values())
+
+    cur.execute(
+        "SELECT COUNT(*) FROM career_application WHERE applied_at >= %s",
+        (since,),
+    )
+    applied_period = cur.fetchone()[0] or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE status = 'offer'),
+               COUNT(*) FILTER (WHERE status = 'accepted')
+        FROM career_application
+        """
+    )
+    offers, accepted = cur.fetchone()
+
+    horizon = min(max(period_days, 30), 90)
+    cur.execute(
+        """
+        SELECT company, role, deadline
+        FROM career_application
+        WHERE status = ANY(%s)
+          AND deadline IS NOT NULL
+          AND deadline >= %s
+          AND deadline <= %s
+        ORDER BY deadline ASC
+        LIMIT 10
+        """,
+        (list(_CAREERS_ACTIVE), local_today(), local_today() + timedelta(days=horizon)),
+    )
+    deadline_rows = cur.fetchall()
+    deadlines = [
+        {"company": c, "role": r, "deadline": d.isoformat(), "_dm": d.strftime("%d/%m")}
+        for c, r, d in deadline_rows
+    ]
+
+    data = {
+        "active_total": int(active_total),
+        "by_status": {s: int(n) for s, n in by_status.items()},
+        "applied_period": int(applied_period),
+        "offers": int(offers or 0),
+        "accepted": int(accepted or 0),
+        "upcoming_deadlines": [
+            {"company": d["company"], "role": d["role"], "deadline": d["deadline"]}
+            for d in deadlines
+        ],
+        "horizon_days": horizon,
+    }
+
+    if active_total == 0 and applied_period == 0:
+        return "No hay solicitudes activas en el pipeline de carrera.", data
+
+    parts = [f"Tienes {active_total} solicitud{'es' if active_total != 1 else ''} activa{'s' if active_total != 1 else ''} en el pipeline."]
+    if by_status:
+        breakdown = ", ".join(f"{s}: {n}" for s, n in sorted(by_status.items(), key=lambda x: -x[1]))
+        parts.append(f"Por estado — {breakdown}.")
+    if offers or accepted:
+        oa_bits = []
+        if offers:
+            oa_bits.append(f"{offers} oferta{'s' if offers != 1 else ''}")
+        if accepted:
+            oa_bits.append(f"{accepted} aceptada{'s' if accepted != 1 else ''}")
+        parts.append("Tienes " + " y ".join(oa_bits) + ".")
+    parts.append(f"En los últimos {period_days} días has aplicado a {applied_period}.")
+    if deadlines:
+        dl = "; ".join(f"{d['company']} ({d['_dm']})" for d in deadlines[:5])
+        parts.append(f"Próximos deadlines: {dl}.")
+    else:
+        parts.append(f"Sin deadlines en los próximos {horizon} días.")
+    return " ".join(parts), data
+
+
+# --------------------------------------------------------------------------- #
+# RSS / articles to read                                                       #
+# --------------------------------------------------------------------------- #
+
+def _rss_summary(cur, since, period_days):
+    cur.execute(
+        "SELECT COUNT(*) FROM rss_articles WHERE created_at >= %s",
+        (since,),
+    )
+    new_count = cur.fetchone()[0] or 0
+
+    cur.execute(
+        """
+        SELECT top_category, COUNT(*)
+        FROM rss_articles
+        WHERE created_at >= %s AND top_category IS NOT NULL
+        GROUP BY top_category
+        ORDER BY COUNT(*) DESC
+        """,
+        (since,),
+    )
+    by_category = {c: int(n) for c, n in cur.fetchall()}
+
+    cur.execute(
+        """
+        SELECT title, top_category
+        FROM rss_articles
+        WHERE global_rank IS NOT NULL AND created_at >= %s
+        ORDER BY global_rank ASC
+        LIMIT 6
+        """,
+        (since,),
+    )
+    top = [{"title": t, "category": c} for t, c in cur.fetchall()]
+
+    data = {
+        "new_count": int(new_count),
+        "by_category": by_category,
+        "top_articles": top,
+    }
+
+    if new_count == 0:
+        return f"No hay artículos nuevos en los últimos {period_days} días.", data
+
+    parts = [f"Tienes {new_count} artículo{'s' if new_count != 1 else ''} para leer de los últimos {period_days} días."]
+    if by_category:
+        cats = ", ".join(f"{c}: {n}" for c, n in by_category.items())
+        parts.append(f"Por categoría — {cats}.")
+    if top:
+        titles = "; ".join(f"«{a['title']}»" + (f" ({a['category']})" if a['category'] else "") for a in top[:5])
+        parts.append(f"Destacados: {titles}.")
+    return " ".join(parts), data
+
+
 _DISPATCH = {
     "gym": _gym_summary,
     "weight": _weight_summary,
@@ -566,6 +771,9 @@ _DISPATCH = {
     "focus": _focus_summary,
     "math": _math_summary,
     "mental": _mental_summary,
+    "menu": _menu_summary,
+    "careers": _careers_summary,
+    "rss": _rss_summary,
 }
 
 

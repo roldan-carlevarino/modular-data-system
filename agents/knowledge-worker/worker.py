@@ -317,20 +317,24 @@ def _factuality_label(f):
 ROUTER_SYSTEM_PROMPT = (
     "Clasificas la intencion de una pregunta de un asistente personal. "
     "Devuelve SOLO JSON con esta forma exacta:\n"
-    '{"mode": "personal" | "knowledge", "domain": "gym" | "weight" | "water" | "schedule" | "focus" | "math" | "mental" | null, '
+    '{"mode": "personal" | "knowledge", "domain": "gym" | "weight" | "water" | "schedule" | "focus" | "math" | "mental" | "menu" | "careers" | "rss" | null, '
     '"period_days": number | null}\n'
     "Reglas:\n"
     "- mode='personal' SOLO si la pregunta es sobre los datos propios del usuario "
     "que se registran: entrenamientos/gimnasio (gym), peso corporal (weight), "
     "consumo de agua (water), su agenda: tareas/to-do y eventos del calendario "
     "(schedule), sesiones de pomodoro/concentracion/estudio (focus), entrenamiento "
-    "de calculo mental/matematicas (math), o bienestar: sueno y estres (mental). "
+    "de calculo mental/matematicas (math), bienestar: sueno y estres (mental), "
+    "que le toca comer hoy/menu del dia (menu), sus solicitudes de trabajo/becas/"
+    "internships y deadlines (careers), o noticias/articulos/papers por leer (rss). "
     "Ejemplos: 'como llevo los entrenamientos', 'cuanto peso', "
     "'he bebido suficiente agua esta semana', 'que tareas tengo pendientes', "
     "'que tengo en el calendario esta semana', 'como llevo las tareas', "
     "'cuanto he estudiado con pomodoro', 'como voy en las mates', "
-    "'cuanto he dormido esta semana', 'como esta mi estres'.\n"
-    "- Si no encaja EXACTAMENTE en gym/weight/water/schedule/focus/math/mental, "
+    "'cuanto he dormido esta semana', 'como esta mi estres', "
+    "'que me toca comer hoy', 'como van mis solicitudes de trabajo', "
+    "'que deadlines tengo', 'que noticias tengo por leer'.\n"
+    "- Si no encaja EXACTAMENTE en gym/weight/water/schedule/focus/math/mental/menu/careers/rss, "
     "mode='knowledge' y domain=null (preguntas de conocimiento, conceptos, "
     "documentos, etc.).\n"
     "- period_days: interpreta expresiones temporales. hoy=1, esta semana=7, "
@@ -348,8 +352,9 @@ PERSONAL_SYSTEM_PROMPT = (
     "para entender referencias de la pregunta actual, no para inventar datos."
 )
 
-# gym/weight/water/schedule/focus/math/mental are the only intents the summary endpoint understands.
-PERSONAL_DOMAINS = {"gym", "weight", "water", "schedule", "focus", "math", "mental"}
+# gym/weight/water/schedule/focus/math/mental/menu/careers/rss are the only intents the summary endpoint understands.
+PERSONAL_DOMAINS = {"gym", "weight", "water", "schedule", "focus", "math", "mental",
+                    "menu", "careers", "rss"}
 
 
 def classify_intent(question):

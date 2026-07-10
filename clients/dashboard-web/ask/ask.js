@@ -246,6 +246,7 @@ function labelPersonalDomain(domain) {
   return {
     gym: "Entrenamientos", weight: "Peso", water: "Agua", schedule: "Agenda",
     focus: "Foco", math: "Mates", mental: "Bienestar",
+    menu: "Men\u00fa", careers: "Carrera", rss: "Noticias",
   }[domain] || "Datos";
 }
 

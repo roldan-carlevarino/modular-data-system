@@ -1866,32 +1866,51 @@ def worker_fail(job_id: int, payload: dict = Body(default={}), user: str = Depen
 # in pgvector; used to suggest merges of near-duplicate concepts.
 # ===========================================================================
 
+# What we embed and where the text comes from. Order = claim priority.
+EMBED_SOURCES = {
+    "concept": ("kn_concept",         "name",    "merged_into IS NULL"),
+    "unit":    ("kn_knowledge_unit",  "content", "status = 'active'"),
+    "chunk":   ("kn_chunk",           "text",    "TRUE"),
+}
+
+
 @router.post("/worker/embed/claim")
 def worker_embed_claim(payload: dict = Body(...), user: str = Depends(get_current_user)):
-    """Return a batch of concepts that still need an embedding for `model`.
+    """Return a batch of items (concepts, then units, then chunks) that still
+    need an embedding for `model`.
 
     Idempotent (no lease): posting results is an upsert, so re-handing the same
-    item is harmless. The worker embeds the returned texts and posts them back.
+    item is harmless. The worker embeds the returned texts and posts them back
+    with their `kind`, so this endpoint is fully kind-agnostic downstream.
     """
     model = (payload.get("model") or EMBED_MODEL_DEFAULT).strip()
     limit = max(1, min(int(payload.get("limit") or 32), 128))
+    # Optional: restrict to specific kinds (defaults to all known sources).
+    kinds = payload.get("kinds") or list(EMBED_SOURCES.keys())
+    kinds = [k for k in kinds if k in EMBED_SOURCES]
     conn = _conn()
     try:
         cur = conn.cursor()
         _ensure_schema(cur)
         _ensure_embedding_schema(cur)
-        cur.execute("""
-            SELECT c.id, c.name
-            FROM kn_concept c
-            WHERE c.merged_into IS NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM kn_embedding e
-                  WHERE e.kind = 'concept' AND e.ref_id = c.id AND e.model = %s
-              )
-            ORDER BY c.id
-            LIMIT %s
-        """, (model, limit))
-        items = [{"id": r[0], "kind": "concept", "text": r[1]} for r in cur.fetchall()]
+        items = []
+        for kind in kinds:
+            if len(items) >= limit:
+                break
+            table, col, where = EMBED_SOURCES[kind]
+            cur.execute(f"""
+                SELECT t.id, t.{col}
+                FROM {table} t
+                WHERE {where}
+                  AND t.{col} IS NOT NULL AND t.{col} <> ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM kn_embedding e
+                      WHERE e.kind = %s AND e.ref_id = t.id AND e.model = %s
+                  )
+                ORDER BY t.id
+                LIMIT %s
+            """, (kind, model, limit - len(items)))
+            items += [{"id": r[0], "kind": kind, "text": r[1]} for r in cur.fetchall()]
         conn.commit()
         cur.close()
         return {"items": items, "model": model, "dim": EMBED_DIM}
@@ -1982,6 +2001,77 @@ def merge_suggestions(threshold: float = Query(0.9, ge=0.5, le=1.0),
         raise
     except Exception as e:
         raise HTTPException(503, f"merge suggestions failed (pgvector unavailable?): {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/search")
+def kn_search(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Semantic (vector) search over embedded items.
+
+    The query vector can be supplied two ways:
+      1. `vec`: a raw query embedding (len == EMBED_DIM). A RAG client / the Mac
+         worker embeds the user's text with the same model and posts it here.
+      2. `kind` + `ref_id`: "more like this" — reuse the stored embedding of an
+         existing item as the query. Works entirely server-side (no Ollama), so
+         it is testable straight from Swagger.
+
+    Searches over `target_kind` (concept | unit | chunk) and returns the nearest
+    neighbours by cosine similarity. The query item is excluded from results.
+    """
+    model = (payload.get("model") or EMBED_MODEL_DEFAULT).strip()
+    target_kind = (payload.get("target_kind") or "unit").strip()
+    limit = max(1, min(int(payload.get("limit") or 10), 100))
+    if target_kind not in EMBED_SOURCES:
+        raise HTTPException(400, f"target_kind must be one of {list(EMBED_SOURCES)}")
+
+    vec = payload.get("vec")
+    src_kind = payload.get("kind")
+    src_ref = payload.get("ref_id")
+
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        _ensure_embedding_schema(cur)
+
+        # Resolve the query vector into a pgvector literal string.
+        if isinstance(vec, list):
+            if len(vec) != EMBED_DIM:
+                raise HTTPException(400, f"vec must have length {EMBED_DIM}")
+            qvec = "[" + ",".join(repr(float(x)) for x in vec) + "]"
+        elif src_kind and src_ref is not None:
+            cur.execute("""
+                SELECT vec::text FROM kn_embedding
+                WHERE kind = %s AND ref_id = %s AND model = %s
+            """, (str(src_kind).strip(), int(src_ref), model))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "no embedding for that kind/ref_id/model")
+            qvec = row[0]
+        else:
+            raise HTTPException(400, "provide either `vec` or (`kind` and `ref_id`)")
+
+        table, col, where = EMBED_SOURCES[target_kind]
+        # Exclude the query item itself when it is of the same kind.
+        exclude_id = int(src_ref) if (src_kind == target_kind and src_ref is not None) else -1
+        cur.execute(f"""
+            SELECT e.ref_id, t.{col}, 1 - (e.vec <=> %s::vector) AS sim
+            FROM kn_embedding e
+            JOIN {table} t ON t.id = e.ref_id AND {where}
+            WHERE e.kind = %s AND e.model = %s AND e.ref_id <> %s
+            ORDER BY e.vec <=> %s::vector
+            LIMIT %s
+        """, (qvec, target_kind, model, exclude_id, qvec, limit))
+        results = [{"kind": target_kind, "ref_id": r[0], "text": r[1],
+                    "similarity": round(float(r[2]), 4)} for r in cur.fetchall()]
+        cur.close()
+        return {"model": model, "target_kind": target_kind,
+                "results": results, "count": len(results)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, f"search failed (pgvector unavailable?): {e}")
     finally:
         conn.close()
 

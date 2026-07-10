@@ -13,6 +13,9 @@ Config via environment variables:
   OLLAMA_URL     Ollama base URL             (default http://localhost:11434)
   OLLAMA_MODEL   Model tag                   (default qwen3.5:4b)
   OLLAMA_NUM_CTX Context window tokens       (default 4096)
+  EMBED_MODEL    Embedding model tag         (default mxbai-embed-large)
+  EMBED_DIM      Embedding dimension         (default 1024)
+  EMBED_BATCH    Concepts embedded per batch (default 16)
   WORKER_ID      Worker identifier           (default hostname)
   POLL_INTERVAL  Seconds between empty polls (default 5)
   MAX_CHUNKS     Max chunks per prompt       (default 8)
@@ -35,6 +38,9 @@ KN_PASSWORD = os.environ.get("KN_PASSWORD", "")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
 OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")
+EMBED_DIM = int(os.environ.get("EMBED_DIM", "1024"))
+EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "16"))
 WORKER_ID = os.environ.get("WORKER_ID", socket.gethostname())
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "8"))
@@ -186,14 +192,61 @@ def process_one(session):
     return True
 
 
+def run_embeddings(texts):
+    """Compute embeddings for a batch of texts via Ollama's /api/embed."""
+    r = requests.post(
+        f"{OLLAMA_URL}/api/embed",
+        json={"model": EMBED_MODEL, "input": texts, "keep_alive": "30m"},
+        timeout=600,
+    )
+    r.raise_for_status()
+    embs = r.json().get("embeddings")
+    if not embs or len(embs) != len(texts):
+        raise WorkerError(f"Embedding count mismatch: got {len(embs or [])} for {len(texts)} texts")
+    return embs
+
+
+def claim_embed(session):
+    r = session.post(
+        f"{API_BASE}/kn/worker/embed/claim",
+        json={"worker_id": WORKER_ID, "model": EMBED_MODEL, "limit": EMBED_BATCH},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def process_embeddings(session):
+    """Embed one batch of concepts that still lack a vector. Returns True if
+    any work was done."""
+    batch = claim_embed(session)
+    items = batch.get("items") or []
+    if not items:
+        return False
+    texts = [it["text"] for it in items]
+    vecs = run_embeddings(texts)
+    payload = {
+        "model": EMBED_MODEL,
+        "items": [{"kind": it.get("kind", "concept"), "ref_id": it["id"], "vec": v}
+                  for it, v in zip(items, vecs)],
+    }
+    r = session.post(f"{API_BASE}/kn/worker/embed/result", json=payload, timeout=120)
+    r.raise_for_status()
+    print(f"[embed] {r.json().get('count')} vectors ({EMBED_MODEL})")
+    return True
+
+
 def main():
     print(f"knowledge-worker starting: api={API_BASE} model={OLLAMA_MODEL} "
-          f"worker_id={WORKER_ID}")
+          f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
     token = login()
     session = make_session(token)
     while True:
         try:
             handled = process_one(session)
+            if not handled:
+                # No extraction pending: use the idle time to backfill embeddings.
+                handled = process_embeddings(session)
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 print("[auth] token expired, re-logging in")

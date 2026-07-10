@@ -79,6 +79,12 @@ REL_TYPE_ALIASES = {
     "relacionado_con": "related_to",
 }
 
+# Embeddings (Phase 3): concept dedup via pgvector cosine similarity. Vectors
+# are produced by the Mac worker (Ollama) and stored in kn_embedding. The
+# dimension is fixed by the chosen model (mxbai-embed-large -> 1024).
+EMBED_DIM = 1024
+EMBED_MODEL_DEFAULT = "mxbai-embed-large"
+
 
 # ---------------------------------------------------------------------------
 # Connection + schema
@@ -281,6 +287,40 @@ def migrate():
         cur.close()
     finally:
         conn.close()
+
+
+_EMBED_SCHEMA_READY = False
+
+
+def _ensure_embedding_schema(cur):
+    """Isolated pgvector schema (kn_embedding + HNSW cosine index).
+
+    Kept separate from the core schema so a missing 'vector' extension only
+    breaks embedding features, not all of /kn. Created lazily by the embedding
+    endpoints; guarded so the DDL runs at most once per process.
+    """
+    global _EMBED_SCHEMA_READY
+    if _EMBED_SCHEMA_READY:
+        return
+    cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS kn_embedding (
+            id          BIGSERIAL PRIMARY KEY,
+            kind        TEXT NOT NULL,
+            ref_id      BIGINT NOT NULL,
+            model       TEXT NOT NULL,
+            dim         INTEGER NOT NULL,
+            vec         vector({EMBED_DIM}) NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (kind, ref_id, model)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS kn_embedding_ref_idx ON kn_embedding(kind, ref_id)")
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS kn_embedding_hnsw
+        ON kn_embedding USING hnsw (vec vector_cosine_ops)
+    """)
+    _EMBED_SCHEMA_READY = True
 
 
 # ---------------------------------------------------------------------------
@@ -1817,6 +1857,131 @@ def worker_fail(job_id: int, payload: dict = Body(default={}), user: str = Depen
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, f"Fail report failed: {e}")
+    finally:
+        conn.close()
+
+
+# ===========================================================================
+# EMBEDDINGS (Phase 3) — vectors computed by the Mac worker (Ollama), stored
+# in pgvector; used to suggest merges of near-duplicate concepts.
+# ===========================================================================
+
+@router.post("/worker/embed/claim")
+def worker_embed_claim(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Return a batch of concepts that still need an embedding for `model`.
+
+    Idempotent (no lease): posting results is an upsert, so re-handing the same
+    item is harmless. The worker embeds the returned texts and posts them back.
+    """
+    model = (payload.get("model") or EMBED_MODEL_DEFAULT).strip()
+    limit = max(1, min(int(payload.get("limit") or 32), 128))
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        _ensure_embedding_schema(cur)
+        cur.execute("""
+            SELECT c.id, c.name
+            FROM kn_concept c
+            WHERE c.merged_into IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM kn_embedding e
+                  WHERE e.kind = 'concept' AND e.ref_id = c.id AND e.model = %s
+              )
+            ORDER BY c.id
+            LIMIT %s
+        """, (model, limit))
+        items = [{"id": r[0], "kind": "concept", "text": r[1]} for r in cur.fetchall()]
+        conn.commit()
+        cur.close()
+        return {"items": items, "model": model, "dim": EMBED_DIM}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(503, f"embed claim failed (pgvector unavailable?): {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/embed/result")
+def worker_embed_result(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Upsert a batch of embeddings posted by the worker."""
+    model = (payload.get("model") or EMBED_MODEL_DEFAULT).strip()
+    items = payload.get("items") or []
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        _ensure_embedding_schema(cur)
+        count = 0
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            kind = (it.get("kind") or "concept").strip()
+            ref_id = it.get("ref_id")
+            vec = it.get("vec")
+            if ref_id is None or not isinstance(vec, list) or len(vec) != EMBED_DIM:
+                continue
+            vec_str = "[" + ",".join(repr(float(x)) for x in vec) + "]"
+            cur.execute("""
+                INSERT INTO kn_embedding (kind, ref_id, model, dim, vec)
+                VALUES (%s, %s, %s, %s, %s::vector)
+                ON CONFLICT (kind, ref_id, model)
+                DO UPDATE SET vec = EXCLUDED.vec, dim = EXCLUDED.dim, created_at = NOW()
+            """, (kind, int(ref_id), model, len(vec), vec_str))
+            count += 1
+        conn.commit()
+        cur.close()
+        return {"ok": True, "count": count}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"embed result failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.get("/review/merge-suggestions")
+def merge_suggestions(threshold: float = Query(0.9, ge=0.5, le=1.0),
+                      model: str = Query(EMBED_MODEL_DEFAULT),
+                      limit: int = Query(50, ge=1, le=200),
+                      user: str = Depends(get_current_user)):
+    """Concept pairs whose embeddings are near-duplicates (cosine >= threshold),
+    ready for a human to confirm a merge. Cross-language duplicates surface here
+    too, since the embedding space is multilingual."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        _ensure_embedding_schema(cur)
+        cur.execute("""
+            SELECT a.ref_id, ca.name, ca.status,
+                   b.ref_id, cb.name, cb.status,
+                   1 - (a.vec <=> b.vec) AS sim
+            FROM kn_embedding a
+            JOIN kn_embedding b
+              ON b.kind = 'concept' AND b.model = a.model AND b.ref_id > a.ref_id
+            JOIN kn_concept ca ON ca.id = a.ref_id AND ca.merged_into IS NULL
+            JOIN kn_concept cb ON cb.id = b.ref_id AND cb.merged_into IS NULL
+            WHERE a.kind = 'concept' AND a.model = %s
+              AND 1 - (a.vec <=> b.vec) >= %s
+            ORDER BY sim DESC
+            LIMIT %s
+        """, (model, threshold, limit))
+        pairs = [{"a_id": r[0], "a": r[1], "a_status": r[2],
+                  "b_id": r[3], "b": r[4], "b_status": r[5],
+                  "similarity": round(float(r[6]), 4)} for r in cur.fetchall()]
+        cur.close()
+        return {"model": model, "threshold": threshold,
+                "suggestions": pairs, "count": len(pairs)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, f"merge suggestions failed (pgvector unavailable?): {e}")
     finally:
         conn.close()
 

@@ -92,6 +92,18 @@ class WorkerError(Exception):
     pass
 
 
+class JobInterrupted(Exception):
+    """Raised when an in-flight background LLM job is preempted (e.g. by a voice
+    request) so the worker can release it back to the queue immediately."""
+    pass
+
+
+# Set by the voice thread the moment the wake word fires, to abort any
+# in-flight background extraction so Ollama is freed for the spoken request.
+# Only extraction (run_ollama) honours it; voice's own LLM calls do not.
+INTERRUPT = threading.Event()
+
+
 def login():
     """Authenticate and return a bearer token."""
     if not KN_USERNAME or not KN_PASSWORD:
@@ -131,17 +143,20 @@ def build_prompt(job):
     return header + "CHUNKS:\n" + body
 
 
-def run_ollama(prompt):
+def run_ollama(prompt, interrupt=None):
     """Call the local Ollama chat endpoint with JSON-formatted output."""
-    return _run_ollama_json(SYSTEM_PROMPT, prompt)
+    return _run_ollama_json(SYSTEM_PROMPT, prompt, interrupt=interrupt)
 
 
-def _run_ollama_json(system, prompt):
-    """Ollama chat with strict JSON output and a custom system prompt."""
+def _run_ollama_json(system, prompt, interrupt=None):
+    """Ollama chat with strict JSON output and a custom system prompt.
+
+    If `interrupt` (a threading.Event) is given, the response is streamed and
+    aborted mid-generation when the event is set, raising JobInterrupted."""
     payload = {
         "model": OLLAMA_MODEL,
         "format": "json",
-        "stream": False,
+        "stream": interrupt is not None,
         "think": False,  # qwen3.5 is a thinking model; disable so content isn't empty
         "keep_alive": "30m",
         "options": {"temperature": 0.1, "num_ctx": OLLAMA_NUM_CTX},
@@ -150,10 +165,31 @@ def _run_ollama_json(system, prompt):
             {"role": "user", "content": prompt},
         ],
     }
-    r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=600)
-    r.raise_for_status()
-    msg = r.json().get("message", {})
-    content = msg.get("content", "")
+    if interrupt is None:
+        r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=600)
+        r.raise_for_status()
+        msg = r.json().get("message", {})
+        content = msg.get("content", "")
+        if not content:
+            raise WorkerError("Empty response from Ollama")
+        return json.loads(content)
+
+    # Streaming path: check the interrupt flag between chunks so a voice request
+    # can preempt a long extraction. Closing the response aborts the generation.
+    parts = []
+    with requests.post(f"{OLLAMA_URL}/api/chat", json=payload,
+                       stream=True, timeout=600) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if interrupt.is_set():
+                raise JobInterrupted()
+            if not line:
+                continue
+            chunk = json.loads(line)
+            parts.append(chunk.get("message", {}).get("content", ""))
+            if chunk.get("done"):
+                break
+    content = "".join(parts)
     if not content:
         raise WorkerError("Empty response from Ollama")
     return json.loads(content)
@@ -186,6 +222,18 @@ def report_fail(session, job_id, error):
         print(f"[warn] could not report failure for job {job_id}: {e}")
 
 
+def release_job(session, job_id):
+    """Requeue a preempted job (attempt-neutral) so it runs first again."""
+    try:
+        session.post(
+            f"{API_BASE}/kn/worker/jobs/{job_id}/release",
+            json={},
+            timeout=30,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] could not release job {job_id}: {e}")
+
+
 def make_session(token):
     s = requests.Session()
     s.headers.update({"Authorization": f"Bearer {token}"})
@@ -202,9 +250,12 @@ def process_one(session):
           f"chunks={len(job.get('chunks') or [])})")
     try:
         prompt = build_prompt(job)
-        extraction = run_ollama(prompt)
+        extraction = run_ollama(prompt, interrupt=INTERRUPT)
         result = post_result(session, job_id, extraction)
         print(f"[job {job_id}] done: {result.get('counts')}")
+    except JobInterrupted:
+        print(f"[job {job_id}] preempted by voice -> released back to queue")
+        release_job(session, job_id)
     except Exception as e:  # noqa: BLE001
         print(f"[job {job_id}] failed: {e}")
         report_fail(session, job_id, e)
@@ -545,6 +596,7 @@ def main():
                 pause_event=pause_event,
                 get_session=lambda: holder["session"],
                 answer_fn=answer_question,
+                interrupt_event=INTERRUPT,
             )
             voice.start()
             print("[voice] wake-word listener active")

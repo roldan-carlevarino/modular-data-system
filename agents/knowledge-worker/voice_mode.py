@@ -81,10 +81,11 @@ _SPEAK_CLEAN = re.compile(r"\[U\d+[^\]]*\]|📊")
 class VoiceMode:
     """Background wake-word listener + local STT that answers in-process."""
 
-    def __init__(self, pause_event, get_session, answer_fn):
+    def __init__(self, pause_event, get_session, answer_fn, interrupt_event=None):
         self._pause = pause_event
         self._get_session = get_session
         self._answer = answer_fn
+        self._interrupt = interrupt_event
         self._history = []
         self._whisper = None
         self._thread = threading.Thread(target=self._run, name="voice", daemon=True)
@@ -149,6 +150,8 @@ class VoiceMode:
 
     def _handle_activation(self, stream):
         self._pause.set()  # main loop yields Ollama to us
+        if self._interrupt is not None:
+            self._interrupt.set()  # abort any in-flight background extraction now
         try:
             print("[voice] activado, escuchando la orden...")
             audio = self._record_command(stream)
@@ -171,6 +174,8 @@ class VoiceMode:
         except Exception as e:  # noqa: BLE001
             print(f"[voice] error answering: {e}", file=sys.stderr)
         finally:
+            if self._interrupt is not None:
+                self._interrupt.clear()  # let background extraction resume
             self._oww.reset()  # clear wake-word buffers to avoid re-trigger
             self._pause.clear()
 

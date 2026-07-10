@@ -2108,6 +2108,40 @@ def worker_fail(job_id: int, payload: dict = Body(default={}), user: str = Depen
         conn.close()
 
 
+@router.post("/worker/jobs/{job_id}/release")
+def worker_release(job_id: int, payload: dict = Body(default={}), user: str = Depends(get_current_user)):
+    """Requeue a claimed job WITHOUT counting it as a failed attempt.
+
+    Used when the worker deliberately preempts an in-flight extraction (e.g. a
+    voice request takes priority): the job goes straight back to 'pending' and,
+    because /worker/claim orders by id, it is picked up first again. The claim
+    increment is undone so preemption is attempt-neutral (never parks a job)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("SELECT id FROM kn_job WHERE id = %s", (job_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Job not found")
+        cur.execute("""
+            UPDATE kn_job
+            SET status = 'pending', worker_id = NULL, error = NULL,
+                finished_at = NULL, attempts = GREATEST(attempts - 1, 0)
+            WHERE id = %s
+        """, (job_id,))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "status": "pending"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Release failed: {e}")
+    finally:
+        conn.close()
+
+
 # ===========================================================================
 # EMBEDDINGS (Phase 3) — vectors computed by the Mac worker (Ollama), stored
 # in pgvector; used to suggest merges of near-duplicate concepts.

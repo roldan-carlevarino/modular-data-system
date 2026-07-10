@@ -373,6 +373,7 @@ def process_chat(session):
     print(f"[chat {chat_id}] {question!r}")
     try:
         intent = classify_intent(question)
+        print(f"[chat {chat_id}] intent -> {intent}")
         if intent["mode"] == "personal":
             _answer_personal(session, chat_id, question, intent)
         else:

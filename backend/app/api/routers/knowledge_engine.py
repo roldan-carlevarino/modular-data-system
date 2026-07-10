@@ -138,6 +138,11 @@ def _ensure_schema(cur):
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS kn_document_created_idx ON kn_document(created_at DESC)")
+    # Optional provenance link to a Library item. NULL for documents entered by
+    # hand (notes, transcripts...) that have no library source. ON DELETE SET
+    # NULL so removing a library item never orphans the extracted knowledge.
+    cur.execute("ALTER TABLE kn_document ADD COLUMN IF NOT EXISTS library_item_id BIGINT")
+    cur.execute("CREATE INDEX IF NOT EXISTS kn_document_libitem_idx ON kn_document(library_item_id)")
 
     # ---- Projection: chunks (deterministic, regenerable) ----
     cur.execute("""
@@ -574,6 +579,7 @@ def ingest_document(
     title = (payload.get("title") or "").strip()
     content = payload.get("content") or ""
     source_type = (payload.get("source_type") or "note").strip()
+    library_item_id = payload.get("library_item_id")
 
     if not title:
         raise HTTPException(400, "title is required")
@@ -592,20 +598,39 @@ def ingest_document(
         cur.execute("SELECT id FROM kn_document WHERE sha256 = %s", (sha,))
         existing = cur.fetchone()
         if existing:
+            # Backfill the library link if this ingest supplies one and the
+            # existing row lacks it. The link is an EVENT first (source of
+            # truth); the column is just its projection.
+            if library_item_id is not None:
+                cur.execute(
+                    "SELECT 1 FROM kn_document WHERE id = %s AND library_item_id IS NULL",
+                    (existing[0],))
+                if cur.fetchone():
+                    _append_event(
+                        cur, f"human:{user}", "document_library_linked",
+                        payload={"document_id": existing[0],
+                                 "library_item_id": int(library_item_id)})
+                    cur.execute(
+                        "UPDATE kn_document SET library_item_id = %s WHERE id = %s",
+                        (int(library_item_id), existing[0]))
+                    conn.commit()
             cur.close()
             return {"document_id": existing[0], "duplicate": True}
 
         actor = f"human:{user}"
         event_id, _ = _append_event(
             cur, actor, "document_ingested",
-            payload={"title": title, "source_type": source_type, "sha256": sha},
+            payload={"title": title, "source_type": source_type, "sha256": sha,
+                     "library_item_id": library_item_id},
         )
 
         cur.execute("""
-            INSERT INTO kn_document (source_type, title, sha256, raw_content, ingest_event)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO kn_document
+                (source_type, title, sha256, raw_content, ingest_event, library_item_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (source_type, title, sha, content, event_id))
+        """, (source_type, title, sha, content, event_id,
+              int(library_item_id) if library_item_id is not None else None))
         document_id = cur.fetchone()[0]
 
         n_chunks = _build_chunks_for_document(cur, document_id, content)
@@ -624,6 +649,129 @@ def ingest_document(
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, f"Ingestion failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/documents/from-library")
+def ingest_from_library(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Ingest a Library item into the knowledge base, assembling its text from
+    the item's summary + notes + highlights, and recording the provenance link
+    (kn_document.library_item_id) so extracted units trace back to this source.
+
+    Idempotent by content hash like /documents. Returns the same shape plus the
+    assembled title/source_type.
+    """
+    library_item_id = payload.get("library_item_id")
+    if library_item_id is None:
+        raise HTTPException(400, "library_item_id is required")
+    lib_id = int(library_item_id)
+
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+
+        cur.execute("""
+            SELECT title, type, coalesce(summary, ''), coalesce(authors, '')
+            FROM lib_item WHERE id = %s
+        """, (lib_id,))
+        item = cur.fetchone()
+        if not item:
+            raise HTTPException(404, "library item not found")
+        title, lib_type, summary, authors = item
+
+        cur.execute("""
+            SELECT coalesce(body_md, '') FROM lib_note
+            WHERE item_id = %s ORDER BY id
+        """, (lib_id,))
+        notes = [r[0] for r in cur.fetchall() if r[0].strip()]
+
+        cur.execute("""
+            SELECT coalesce(quote, ''), coalesce(comment, '') FROM lib_highlight
+            WHERE item_id = %s ORDER BY id
+        """, (lib_id,))
+        highlights = cur.fetchall()
+
+        # Assemble a single text artifact. Highlights (the user's own extracted
+        # quotes) are the richest material for extraction.
+        parts = []
+        if authors:
+            parts.append(f"Authors: {authors}")
+        if summary.strip():
+            parts.append(summary.strip())
+        if highlights:
+            parts.append("Highlights:")
+            for quote, comment in highlights:
+                line = f"- {quote.strip()}" if quote.strip() else ""
+                if comment.strip():
+                    line += f" ({comment.strip()})" if line else f"- {comment.strip()}"
+                if line:
+                    parts.append(line)
+        if notes:
+            parts.append("Notes:")
+            parts.extend(notes)
+
+        content = "\n\n".join(parts).strip()
+        if not content:
+            raise HTTPException(400, "library item has no summary, notes or highlights to ingest")
+
+        source_type = lib_type if lib_type in VALID_SOURCE_TYPES else "note"
+        sha = _sha256(content)
+
+        cur.execute("SELECT id, library_item_id FROM kn_document WHERE sha256 = %s", (sha,))
+        existing = cur.fetchone()
+        if existing:
+            # Same content already ingested. Record the link as an event (truth)
+            # and project it onto the column only if not already linked.
+            if existing[1] is None:
+                _append_event(
+                    cur, f"human:{user}", "document_library_linked",
+                    payload={"document_id": existing[0], "library_item_id": lib_id})
+                cur.execute(
+                    "UPDATE kn_document SET library_item_id = %s WHERE id = %s",
+                    (lib_id, existing[0]))
+                conn.commit()
+            cur.close()
+            return {"document_id": existing[0], "duplicate": True,
+                    "title": title, "source_type": source_type}
+
+        actor = f"human:{user}"
+        event_id, _ = _append_event(
+            cur, actor, "document_ingested",
+            payload={"title": title, "source_type": source_type, "sha256": sha,
+                     "library_item_id": lib_id},
+        )
+        cur.execute("""
+            INSERT INTO kn_document
+                (source_type, title, sha256, raw_content, ingest_event, library_item_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (source_type, title, sha, content, event_id, lib_id))
+        document_id = cur.fetchone()[0]
+        n_chunks = _build_chunks_for_document(cur, document_id, content)
+
+        # Auto-enqueue extraction so the library button is one-click: ingest ->
+        # the worker will extract concepts/units and embed them, then it's askable.
+        cur.execute("""
+            INSERT INTO kn_job (kind, document_id, status)
+            VALUES ('extract', %s, 'pending') RETURNING id
+        """, (document_id,))
+        job_id = cur.fetchone()[0]
+        _append_event(cur, actor, "extraction_requested",
+                      payload={"job_id": job_id, "document_id": document_id})
+
+        conn.commit()
+        cur.close()
+        return {"document_id": document_id, "event_id": event_id, "chunks": n_chunks,
+                "job_id": job_id, "duplicate": False,
+                "title": title, "source_type": source_type}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Library ingestion failed: {e}")
     finally:
         conn.close()
 

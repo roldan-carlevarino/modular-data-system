@@ -277,6 +277,7 @@
             <div class="library__detail-head">
                 <span class="library__card-type library__card-type--${item.type}">${typeLabel(item.type)}</span>
                 <div class="library__detail-actions">
+                    <button class="library__icon-btn" id="libDetIngest" title="Ingest into knowledge base (Ask)">🧠</button>
                     <button class="library__icon-btn" id="libDetEdit" title="Edit">✎</button>
                     <button class="library__icon-btn" id="libDetDelete" title="Delete">🗑</button>
                 </div>
@@ -367,6 +368,30 @@
 
     function wireDetail(item) {
         $('libDetEdit').addEventListener('click', () => openItemModal(item.id));
+        const ingestBtn = $('libDetIngest');
+        if (ingestBtn) {
+            ingestBtn.addEventListener('click', async () => {
+                if (ingestBtn.disabled) return;
+                ingestBtn.disabled = true;
+                const prev = ingestBtn.textContent;
+                ingestBtn.textContent = '⏳';
+                try {
+                    const r = await apiJson('/kn/documents/from-library', 'POST',
+                        { library_item_id: item.id });
+                    if (r.duplicate) {
+                        alert('Already in the knowledge base (linked). You can ask about it in the Ask tab.');
+                    } else {
+                        alert(`Ingested "${r.title}" into the knowledge base (${r.chunks} chunks). ` +
+                              `Extraction will run on the worker; then ask about it in the Ask tab.`);
+                    }
+                } catch (e) {
+                    alert(`Ingest failed: ${e.message}`);
+                } finally {
+                    ingestBtn.disabled = false;
+                    ingestBtn.textContent = prev;
+                }
+            });
+        }
         $('libDetDelete').addEventListener('click', async () => {
             if (!confirm(`Delete "${item.title}"?`)) return;
             try {

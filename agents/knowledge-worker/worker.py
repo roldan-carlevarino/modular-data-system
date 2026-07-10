@@ -19,6 +19,8 @@ Config via environment variables:
   WORKER_ID      Worker identifier           (default hostname)
   POLL_INTERVAL  Seconds between empty polls (default 5)
   MAX_CHUNKS     Max chunks per prompt       (default 8)
+  VOICE_ENABLED  1 to run the wake-word voice mode on this machine (default 0);
+                 see voice_mode.py for its own config + requirements-voice.txt.
 
 Tuned for an Apple Silicon (M1) Mac Mini with 8 GB unified memory: qwen3.5:4b
 at Q4 (~3.4 GB) fits in RAM without swapping, leaving headroom for the OS.
@@ -28,6 +30,7 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 
 import requests
@@ -44,6 +47,11 @@ EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "16"))
 WORKER_ID = os.environ.get("WORKER_ID", socket.gethostname())
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "8"))
+
+# Voice mode (optional): an always-on wake-word listener on this machine's mic.
+# When it hears the wake word it pauses background jobs (so Ollama is free) and
+# answers the spoken request first, in-process, via the shared answer engine.
+VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "0") == "1"
 
 SYSTEM_PROMPT = (
     "You extract a knowledge graph from study material. "
@@ -401,12 +409,16 @@ def process_chat(session):
     history = chat.get("history") or []
     print(f"[chat {chat_id}] {question!r}")
     try:
-        intent = classify_intent(question)
+        answer, ctx, intent = answer_question(session, question, history, top_k)
         print(f"[chat {chat_id}] intent -> {intent}")
-        if intent["mode"] == "personal":
-            _answer_personal(session, chat_id, question, intent, history)
-        else:
-            _answer_knowledge(session, chat_id, question, top_k, history)
+        rr = session.post(
+            f"{API_BASE}/kn/worker/chat/result",
+            json={"chat_id": chat_id, "answer": answer,
+                  "context": ctx, "model": OLLAMA_MODEL},
+            timeout=60,
+        )
+        rr.raise_for_status()
+        print(f"[chat {chat_id}] answered ({intent['mode']})")
     except Exception as e:  # noqa: BLE001
         print(f"[chat {chat_id}] failed: {e}")
         try:
@@ -418,6 +430,18 @@ def process_chat(session):
         except Exception as e2:  # noqa: BLE001
             print(f"[warn] could not report chat failure {chat_id}: {e2}")
     return True
+
+
+def answer_question(session, question, history=None, top_k=6):
+    """Shared answer engine used by BOTH the chat queue (web dashboard) and the
+    local voice mode. Classifies intent, then answers from personal-data SQL
+    aggregates or via RAG. Returns (answer_text, context_list, intent_dict)."""
+    intent = classify_intent(question)
+    if intent["mode"] == "personal":
+        answer, ctx = _answer_personal(session, question, intent, history)
+    else:
+        answer, ctx = _answer_knowledge(session, question, top_k, history)
+    return answer, ctx, intent
 
 
 def _format_history(history):
@@ -438,8 +462,9 @@ def _format_history(history):
     return "CONVERSACION PREVIA (mas antigua primero):\n" + "\n".join(lines) + "\n\n"
 
 
-def _answer_personal(session, chat_id, question, intent, history=None):
-    """Answer a question about the user's own metrics from live aggregates."""
+def _answer_personal(session, question, intent, history=None):
+    """Answer a question about the user's own metrics from live aggregates.
+    Returns (answer_text, context_list)."""
     domain = intent["domain"]
     period = intent["period_days"]
     summ = fetch_personal_summary(session, domain, period)
@@ -451,14 +476,7 @@ def _answer_personal(session, chat_id, question, intent, history=None):
     answer = run_ollama_text(PERSONAL_SYSTEM_PROMPT, user_msg)
     ctx = [{"kind": "personal", "domain": domain, "period_days": period,
             "summary": summ.get("summary", ""), "data": summ.get("data")}]
-    rr = session.post(
-        f"{API_BASE}/kn/worker/chat/result",
-        json={"chat_id": chat_id, "answer": answer,
-              "context": ctx, "model": OLLAMA_MODEL},
-        timeout=60,
-    )
-    rr.raise_for_status()
-    print(f"[chat {chat_id}] answered (personal:{domain}/{period}d)")
+    return answer, ctx
 
 
 def _standalone_query(question, history):
@@ -481,8 +499,9 @@ def _standalone_query(question, history):
     return rewritten
 
 
-def _answer_knowledge(session, chat_id, question, top_k, history=None):
-    """Answer a general-knowledge question via RAG over the knowledge base."""
+def _answer_knowledge(session, question, top_k, history=None):
+    """Answer a general-knowledge question via RAG over the knowledge base.
+    Returns (answer_text, context_list)."""
     search_query = _standalone_query(question, history)
     qvec = run_embeddings([search_query])[0]
     sr = session.post(
@@ -505,14 +524,7 @@ def _answer_knowledge(session, chat_id, question, top_k, history=None):
         f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
     )
     answer = run_ollama_text(CHAT_SYSTEM_PROMPT, user_msg)
-    rr = session.post(
-        f"{API_BASE}/kn/worker/chat/result",
-        json={"chat_id": chat_id, "answer": answer,
-              "context": results, "model": OLLAMA_MODEL},
-        timeout=60,
-    )
-    rr.raise_for_status()
-    print(f"[chat {chat_id}] answered ({len(results)} units)")
+    return answer, results
 
 
 def main():
@@ -520,20 +532,45 @@ def main():
           f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
     token = login()
     session = make_session(token)
+    # Mutable holder so the voice thread always sees the current session even
+    # after a token refresh (which replaces the session object).
+    holder = {"session": session}
+
+    pause_event = None
+    if VOICE_ENABLED:
+        try:
+            from voice_mode import VoiceMode
+            pause_event = threading.Event()
+            voice = VoiceMode(
+                pause_event=pause_event,
+                get_session=lambda: holder["session"],
+                answer_fn=answer_question,
+            )
+            voice.start()
+            print("[voice] wake-word listener active")
+        except Exception as e:  # noqa: BLE001
+            print(f"[voice] disabled: {e}")
+            pause_event = None
+
     while True:
+        # While a voice interaction is running, give it exclusive use of Ollama:
+        # do not claim chats / extraction / embedding jobs.
+        if pause_event is not None and pause_event.is_set():
+            time.sleep(0.2)
+            continue
         try:
             # Priority: chat turns (a human is waiting) > extraction > embed backfill.
-            handled = process_chat(session)
+            handled = process_chat(holder["session"])
             if not handled:
-                handled = process_one(session)
+                handled = process_one(holder["session"])
             if not handled:
                 # Idle: use the time to backfill embeddings.
-                handled = process_embeddings(session)
+                handled = process_embeddings(holder["session"])
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 print("[auth] token expired, re-logging in")
                 token = login()
-                session = make_session(token)
+                holder["session"] = make_session(token)
                 continue
             print(f"[error] HTTP: {e}")
             handled = False

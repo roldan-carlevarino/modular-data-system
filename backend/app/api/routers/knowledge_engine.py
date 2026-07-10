@@ -2296,6 +2296,38 @@ def kn_search(payload: dict = Body(...), user: str = Depends(get_current_user)):
         """, (qvec, target_kind, model, exclude_id, qvec, limit))
         results = [{"kind": target_kind, "ref_id": r[0], "text": r[1],
                     "similarity": round(float(r[2]), 4)} for r in cur.fetchall()]
+
+        # Provenance: resolve each unit back to its source document(s) and, when
+        # the document was ingested from the Library, the originating item. Chain:
+        # unit.create_event -> kn_event.basis[{chunk_id}] -> kn_chunk.document_id
+        # -> kn_document.library_item_id -> lib_item. Enables clickable citations.
+        if target_kind == "unit" and results:
+            unit_ids = [r["ref_id"] for r in results]
+            cur.execute("""
+                SELECT u.id, d.id, d.title, d.library_item_id, li.title, li.type
+                FROM kn_knowledge_unit u
+                JOIN kn_event ev ON ev.id = u.create_event
+                JOIN LATERAL jsonb_array_elements(ev.basis) AS b(elem) ON TRUE
+                JOIN kn_chunk c ON c.id = NULLIF(b.elem->>'chunk_id', '')::bigint
+                JOIN kn_document d ON d.id = c.document_id
+                LEFT JOIN lib_item li ON li.id = d.library_item_id
+                WHERE u.id = ANY(%s)
+            """, (unit_ids,))
+            src_map = {}
+            for uid, doc_id, doc_title, lib_id, lib_title, lib_type in cur.fetchall():
+                seen = src_map.setdefault(uid, {})
+                if doc_id in seen:
+                    continue
+                seen[doc_id] = {
+                    "document_id": doc_id,
+                    "document_title": doc_title,
+                    "library_item_id": lib_id,
+                    "library_title": lib_title,
+                    "library_type": lib_type,
+                }
+            for r in results:
+                r["sources"] = list(src_map.get(r["ref_id"], {}).values())
+
         cur.close()
         return {"model": model, "target_kind": target_kind,
                 "results": results, "count": len(results)}

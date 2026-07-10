@@ -49,6 +49,16 @@ document.addEventListener("DOMContentLoaded", () => {
     renderAskMessages();
     askEls.input.focus();
   });
+
+  // Clicking a library-backed citation jumps to that item in the Library tab.
+  askEls.messages.addEventListener("click", (e) => {
+    const btn = e.target.closest(".ask-cite-src--link");
+    if (!btn) return;
+    const id = btn.getAttribute("data-lib-item");
+    if (id && typeof window.openLibraryItem === "function") {
+      window.openLibraryItem(id);
+    }
+  });
 });
 
 function autoGrowAskInput() {
@@ -194,12 +204,38 @@ function renderAskCitations(context) {
     return `<div class="ask-cite" title="${escapeHtml(u.text || "")}">
       <span class="ask-cite-id">[U${u.ref_id}]</span>
       <span class="ask-cite-text">${escapeHtml(u.text || "")}</span>${sim}
+      ${renderAskSource(u.sources)}
     </div>`;
   }).join("");
   return `<details class="ask-cites">
     <summary>${context.length} source${context.length === 1 ? "" : "s"}</summary>
     ${chips}
   </details>`;
+}
+
+// A unit can trace back to one or more source documents. When a document was
+// ingested from the Library, render a clickable link that opens that item.
+function renderAskSource(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) return "";
+  const seen = new Set();
+  const tags = [];
+  for (const s of sources) {
+    const label = s.library_title || s.document_title;
+    if (!label) continue;
+    const key = s.library_item_id != null ? `L${s.library_item_id}` : `D${s.document_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (s.library_item_id != null && typeof window.openLibraryItem === "function") {
+      tags.push(
+        `<button type="button" class="ask-cite-src ask-cite-src--link" ` +
+        `data-lib-item="${s.library_item_id}" title="Open in Library">` +
+        `📄 ${escapeHtml(label)}</button>`
+      );
+    } else {
+      tags.push(`<span class="ask-cite-src">📄 ${escapeHtml(label)}</span>`);
+    }
+  }
+  return tags.length ? `<div class="ask-cite-sources">${tags.join("")}</div>` : "";
 }
 
 function renderMarkdown(text) {

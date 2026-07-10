@@ -743,6 +743,27 @@
         return d.toISOString().slice(0, 10);
     }
 
+    // Exposed so other sections (e.g. Ask chat citations) can jump straight to
+    // a library item. Switches to the Library tab, loads data if needed, and
+    // opens the item's detail pane.
+    window.openLibraryItem = async function (id) {
+        if (id == null) return;
+        const numId = Number(id);
+        const tab = $('tab12');
+        if (tab) tab.checked = true;
+        state.selectedId = numId;
+        if (!state.items.length) {
+            try { await refreshAll(); } catch (_) { /* ignore */ }
+        } else {
+            renderList();
+        }
+        renderDetail(numId);
+        const section = document.getElementById('library');
+        if (section && section.scrollIntoView) {
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    };
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {

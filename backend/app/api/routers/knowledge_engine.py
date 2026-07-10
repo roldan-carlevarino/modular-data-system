@@ -274,6 +274,29 @@ def _ensure_schema(cur):
     cur.execute("CREATE INDEX IF NOT EXISTS kn_job_status_idx ON kn_job(status, id)")
     cur.execute("CREATE INDEX IF NOT EXISTS kn_job_doc_idx    ON kn_job(document_id)")
 
+    # ---- Chat turns (Phase 4 RAG) ----
+    # A question is queued here; the Mac worker embeds it, runs vector search,
+    # generates an answer with the local LLM, and posts it back. Leased like jobs.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kn_chat (
+            id           BIGSERIAL PRIMARY KEY,
+            question     TEXT NOT NULL,
+            answer       TEXT,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            top_k        INTEGER NOT NULL DEFAULT 6,
+            context      JSONB NOT NULL DEFAULT '[]'::jsonb,
+            model        TEXT,
+            error        TEXT,
+            worker_id    TEXT,
+            attempts     INTEGER NOT NULL DEFAULT 0,
+            create_event BIGINT REFERENCES kn_event(id),
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            claimed_at   TIMESTAMPTZ,
+            finished_at  TIMESTAMPTZ
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS kn_chat_status_idx ON kn_chat(status, id)")
+
     _SCHEMA_READY = True
 
 
@@ -2072,6 +2095,182 @@ def kn_search(payload: dict = Body(...), user: str = Depends(get_current_user)):
         raise
     except Exception as e:
         raise HTTPException(503, f"search failed (pgvector unavailable?): {e}")
+    finally:
+        conn.close()
+
+
+# ===========================================================================
+# CHAT (Phase 4) — RAG over the knowledge base. A question is queued; the Mac
+# worker embeds it, runs vector search, and generates a grounded answer with
+# the local LLM, then posts it back. The browser polls for the answer.
+# ===========================================================================
+
+CHAT_LEASE_MINUTES = 5
+
+
+@router.post("/chat/ask")
+def chat_ask(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Queue a question for the worker to answer via RAG. Returns a chat_id the
+    client polls with GET /kn/chat/{id}."""
+    question = (payload.get("question") or "").strip()
+    if not question:
+        raise HTTPException(400, "question is required")
+    top_k = max(1, min(int(payload.get("top_k") or 6), 20))
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        ev_id, _ = _append_event(cur, f"human:{user}", "chat_asked",
+                                 payload={"question": question, "top_k": top_k})
+        cur.execute("""
+            INSERT INTO kn_chat (question, top_k, status, create_event)
+            VALUES (%s, %s, 'pending', %s) RETURNING id
+        """, (question, top_k, ev_id))
+        chat_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        return {"chat_id": chat_id, "status": "pending"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"chat ask failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.get("/chat/{chat_id}")
+def chat_get(chat_id: int, user: str = Depends(get_current_user)):
+    """Poll a chat turn. status is pending | in_progress | done | error."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("""
+            SELECT id, question, answer, status, top_k, context, model, error,
+                   created_at, finished_at
+            FROM kn_chat WHERE id = %s
+        """, (chat_id,))
+        r = cur.fetchone()
+        cur.close()
+        if not r:
+            raise HTTPException(404, "chat not found")
+        return {"chat_id": r[0], "question": r[1], "answer": r[2], "status": r[3],
+                "top_k": r[4], "context": r[5], "model": r[6], "error": r[7],
+                "created_at": r[8].isoformat() if r[8] else None,
+                "finished_at": r[9].isoformat() if r[9] else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"chat get failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/chat/claim")
+def worker_chat_claim(payload: dict = Body(default={}), user: str = Depends(get_current_user)):
+    """Worker pulls the next pending chat turn (with a lease). A stale in_progress
+    turn is requeued after CHAT_LEASE_MINUTES."""
+    worker_id = (payload.get("worker_id") or "worker").strip()
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("""
+            WITH nxt AS (
+                SELECT id FROM kn_chat
+                WHERE status = 'pending'
+                   OR (status = 'in_progress'
+                       AND claimed_at < NOW() - INTERVAL '%s minutes')
+                ORDER BY id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE kn_chat c
+            SET status = 'in_progress', worker_id = %%s,
+                attempts = c.attempts + 1, claimed_at = NOW()
+            FROM nxt WHERE c.id = nxt.id
+            RETURNING c.id, c.question, c.top_k
+        """ % CHAT_LEASE_MINUTES, (worker_id,))
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        if not row:
+            return {"chat": None}
+        return {"chat": {"id": row[0], "question": row[1], "top_k": row[2]}}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"chat claim failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/chat/result")
+def worker_chat_result(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Worker posts the generated answer + the retrieved context."""
+    chat_id = payload.get("chat_id")
+    answer = (payload.get("answer") or "").strip()
+    context = payload.get("context") or []
+    model = (payload.get("model") or "").strip() or None
+    if chat_id is None:
+        raise HTTPException(400, "chat_id is required")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        _append_event(cur, "machine:worker", "chat_answered",
+                      payload={"chat_id": chat_id, "answer": answer,
+                               "context": context, "model": model},
+                      epistemic_status="generated_machine")
+        cur.execute("""
+            UPDATE kn_chat
+            SET answer = %s, context = %s::jsonb, model = %s,
+                status = 'done', error = NULL, finished_at = NOW()
+            WHERE id = %s
+        """, (answer, json.dumps(context), model, int(chat_id)))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "chat_id": chat_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"chat result failed: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/worker/chat/fail")
+def worker_chat_fail(payload: dict = Body(...), user: str = Depends(get_current_user)):
+    """Worker reports a failure. The turn is marked 'error' so the client stops
+    polling; the error text is stored for debugging."""
+    chat_id = payload.get("chat_id")
+    error = (payload.get("error") or "unknown error")[:1000]
+    if chat_id is None:
+        raise HTTPException(400, "chat_id is required")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_schema(cur)
+        cur.execute("""
+            UPDATE kn_chat
+            SET status = 'error', error = %s, finished_at = NOW()
+            WHERE id = %s
+        """, (error, int(chat_id)))
+        conn.commit()
+        cur.close()
+        return {"ok": True, "chat_id": chat_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"chat fail failed: {e}")
     finally:
         conn.close()
 

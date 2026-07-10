@@ -236,6 +236,95 @@ def process_embeddings(session):
     return True
 
 
+CHAT_SYSTEM_PROMPT = (
+    "Eres un asistente que responde preguntas usando EXCLUSIVAMENTE el CONTEXTO "
+    "proporcionado (fragmentos recuperados de una base de conocimiento). "
+    "Reglas: (1) No inventes: si el contexto no contiene la respuesta, di que no "
+    "hay informacion suficiente. (2) Responde en el mismo idioma que la pregunta. "
+    "(3) Cita las unidades que uses con su marcador [U<id>]. (4) Se conciso y claro."
+)
+
+
+def run_ollama_text(system, user_msg):
+    """Plain (non-JSON) chat completion with the local LLM for answer generation."""
+    payload = {
+        "model": OLLAMA_MODEL,
+        "stream": False,
+        "think": False,
+        "keep_alive": "30m",
+        "options": {"temperature": 0.2, "num_ctx": OLLAMA_NUM_CTX},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+    }
+    r = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=600)
+    r.raise_for_status()
+    content = r.json().get("message", {}).get("content", "")
+    if not content:
+        raise WorkerError("Empty answer from Ollama")
+    return content.strip()
+
+
+def claim_chat(session):
+    r = session.post(
+        f"{API_BASE}/kn/worker/chat/claim",
+        json={"worker_id": WORKER_ID},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json().get("chat")
+
+
+def process_chat(session):
+    """Answer one queued chat turn via RAG: embed question -> vector search ->
+    generate a grounded answer. Returns True if a turn was handled."""
+    chat = claim_chat(session)
+    if not chat:
+        return False
+    chat_id = chat["id"]
+    question = chat["question"]
+    top_k = chat.get("top_k") or 6
+    print(f"[chat {chat_id}] {question!r}")
+    try:
+        qvec = run_embeddings([question])[0]
+        sr = session.post(
+            f"{API_BASE}/kn/search",
+            json={"model": EMBED_MODEL, "vec": qvec,
+                  "target_kind": "unit", "limit": top_k},
+            timeout=60,
+        )
+        sr.raise_for_status()
+        results = sr.json().get("results") or []
+        if results:
+            context_txt = "\n".join(
+                f"[U{u['ref_id']}] {u['text']}" for u in results
+            )
+        else:
+            context_txt = "(no hay fragmentos relevantes)"
+        user_msg = f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
+        answer = run_ollama_text(CHAT_SYSTEM_PROMPT, user_msg)
+        rr = session.post(
+            f"{API_BASE}/kn/worker/chat/result",
+            json={"chat_id": chat_id, "answer": answer,
+                  "context": results, "model": OLLAMA_MODEL},
+            timeout=60,
+        )
+        rr.raise_for_status()
+        print(f"[chat {chat_id}] answered ({len(results)} units)")
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat {chat_id}] failed: {e}")
+        try:
+            session.post(
+                f"{API_BASE}/kn/worker/chat/fail",
+                json={"chat_id": chat_id, "error": str(e)[:1000]},
+                timeout=30,
+            )
+        except Exception as e2:  # noqa: BLE001
+            print(f"[warn] could not report chat failure {chat_id}: {e2}")
+    return True
+
+
 def main():
     print(f"knowledge-worker starting: api={API_BASE} model={OLLAMA_MODEL} "
           f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
@@ -243,9 +332,12 @@ def main():
     session = make_session(token)
     while True:
         try:
-            handled = process_one(session)
+            # Priority: chat turns (a human is waiting) > extraction > embed backfill.
+            handled = process_chat(session)
             if not handled:
-                # No extraction pending: use the idle time to backfill embeddings.
+                handled = process_one(session)
+            if not handled:
+                # Idle: use the time to backfill embeddings.
                 handled = process_embeddings(session)
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:

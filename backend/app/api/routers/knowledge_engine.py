@@ -653,11 +653,43 @@ def ingest_document(
         conn.close()
 
 
+def _extract_pdf_text_from_b2(file_path: str) -> str:
+    """Download a PDF stored on B2 and return its extracted text. Empty string
+    on any failure (missing text layer, download error, etc.)."""
+    import io
+
+    from routers.media import _get_b2
+
+    try:
+        _, bucket = _get_b2()
+        buf = io.BytesIO()
+        bucket.download_file_by_name(file_path).save(buf)
+        data = buf.getvalue()
+    except Exception:
+        return ""
+    if not data:
+        return ""
+
+    try:
+        import pdfplumber
+
+        pages = []
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text() or ""
+                if t.strip():
+                    pages.append(t.strip())
+        return "\n\n".join(pages).strip()
+    except Exception:
+        return ""
+
+
 @router.post("/documents/from-library")
 def ingest_from_library(payload: dict = Body(...), user: str = Depends(get_current_user)):
     """Ingest a Library item into the knowledge base, assembling its text from
-    the item's summary + notes + highlights, and recording the provenance link
-    (kn_document.library_item_id) so extracted units trace back to this source.
+    the item's summary + notes + highlights (and the uploaded PDF's full text,
+    if present), and recording the provenance link (kn_document.library_item_id)
+    so extracted units trace back to this source.
 
     Idempotent by content hash like /documents. Returns the same shape plus the
     assembled title/source_type.
@@ -673,13 +705,14 @@ def ingest_from_library(payload: dict = Body(...), user: str = Depends(get_curre
         _ensure_schema(cur)
 
         cur.execute("""
-            SELECT title, type, coalesce(summary, ''), coalesce(authors::text, '')
+            SELECT title, type, coalesce(summary, ''), coalesce(authors::text, ''),
+                   file_path
             FROM lib_item WHERE id = %s
         """, (lib_id,))
         item = cur.fetchone()
         if not item:
             raise HTTPException(404, "library item not found")
-        title, lib_type, summary, authors_raw = item
+        title, lib_type, summary, authors_raw, file_path = item
 
         # authors is a JSONB array of {"name": ...} objects; flatten to names.
         authors = ""
@@ -728,9 +761,20 @@ def ingest_from_library(payload: dict = Body(...), user: str = Depends(get_curre
             parts.append("Notes:")
             parts.extend(notes)
 
+        # For papers where only the PDF is uploaded (no summary/notes/highlights),
+        # extract the PDF's full text so it can still be ingested.
+        if file_path:
+            pdf_text = _extract_pdf_text_from_b2(file_path)
+            if pdf_text:
+                parts.append("Full text:")
+                parts.append(pdf_text)
+
         content = "\n\n".join(parts).strip()
         if not content:
-            raise HTTPException(400, "library item has no summary, notes or highlights to ingest")
+            raise HTTPException(
+                400,
+                "library item has no summary, notes, highlights or readable PDF text to ingest",
+            )
 
         source_type = lib_type if lib_type in VALID_SOURCE_TYPES else "note"
         sha = _sha256(content)

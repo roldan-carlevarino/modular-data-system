@@ -38,6 +38,7 @@ Config via environment variables:
   VOICE_SILENCE_RMS     Energy below this counts as silence (default 0.012)
   VOICE_MIN_SPEECH_MS   Min speech before endpointing (ms)  (default 300)
   CHAT_TOP_K            RAG neighbours to retrieve          (default 6)
+  AUDIO_INPUT_DEVICE    Mic index/name (empty = system default)
   SPEAK              1 to speak answers via `say`           (default 1 on macOS)
   SPEAK_VOICE        macOS voice name                       (default system)
 """
@@ -64,6 +65,10 @@ VOICE_MAX_SECONDS = float(os.environ.get("VOICE_MAX_SECONDS", "12"))
 VOICE_SILENCE_RMS = float(os.environ.get("VOICE_SILENCE_RMS", "0.012"))
 VOICE_MIN_SPEECH_MS = int(os.environ.get("VOICE_MIN_SPEECH_MS", "300"))
 CHAT_TOP_K = int(os.environ.get("CHAT_TOP_K", "6"))
+# Mic selection: leave empty to use the system default input device, or set to
+# the device index / name shown by `python -m sounddevice`.
+_dev = os.environ.get("AUDIO_INPUT_DEVICE", "").strip()
+AUDIO_INPUT_DEVICE = (int(_dev) if _dev.lstrip("-").isdigit() else _dev) or None
 _IS_MAC = platform.system() == "Darwin"
 SPEAK = os.environ.get("SPEAK", "1" if _IS_MAC else "0") == "1"
 SPEAK_VOICE = os.environ.get("SPEAK_VOICE", "")
@@ -124,7 +129,8 @@ class VoiceMode:
 
     def _run(self):
         stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                                dtype="int16", blocksize=_FRAME)
+                                dtype="int16", blocksize=_FRAME,
+                                device=AUDIO_INPUT_DEVICE)
         stream.start()
         print("[voice] escuchando... (di la palabra de activación)")
         try:

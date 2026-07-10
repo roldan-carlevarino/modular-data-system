@@ -164,6 +164,29 @@
   color: var(--accent-primary);
 }
 
+.ask-cite-fact {
+  flex: none;
+  padding: 0.02rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+}
+
+.ask-cite-fact--fact {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.ask-cite-fact--opinion {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
 .ask-cite-text {
   flex: 1 1 auto;
   overflow: hidden;

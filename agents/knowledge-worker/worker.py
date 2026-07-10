@@ -51,7 +51,8 @@ SYSTEM_PROMPT = (
     "{\n"
     '  "concepts":  [{"name": string, "aliases": [string]}],\n'
     '  "relations": [{"src": string, "dst": string, "rel_type": string, "confidence": number}],\n'
-    '  "units":     [{"content": string, "role": string, "concepts": [string], '
+    '  "units":     [{"content": string, "role": string, "factuality": string, '
+    '"concepts": [string], '
     '"confidence": number, "basis_chunk_ids": [number]}]\n'
     "}\n"
     "Rules:\n"
@@ -63,6 +64,11 @@ SYSTEM_PROMPT = (
     "- 'src' and 'dst' MUST be names that appear in 'concepts'.\n"
     "- A unit is one atomic statement (definition, claim, fact, procedure step). "
     "role is one of: definition, claim, fact, procedure, example.\n"
+    "- factuality classifies the statement on an objectivity axis (independent of "
+    "role): use \"fact\" for objective, verifiable statements (definitions, data, "
+    "established science, procedures); use \"opinion\" for subjective, evaluative, "
+    "normative or speculative statements (judgements, recommendations, predictions, "
+    "'should'/'best'/'better' claims). If genuinely unclear, use \"unknown\".\n"
     "- UNITS ARE THE MOST IMPORTANT OUTPUT. Turn EVERY sentence that states a "
     "definition, fact, claim, or step into its own unit. Do NOT leave 'units' "
     "empty when the text contains statements. Aim for at least one unit per "
@@ -239,9 +245,13 @@ def process_embeddings(session):
 CHAT_SYSTEM_PROMPT = (
     "Eres un asistente que responde preguntas usando EXCLUSIVAMENTE el CONTEXTO "
     "proporcionado (fragmentos recuperados de una base de conocimiento). "
+    "Cada unidad viene etiquetada como (hecho) o (opinion). "
     "Reglas: (1) No inventes: si el contexto no contiene la respuesta, di que no "
     "hay informacion suficiente. (2) Responde en el mismo idioma que la pregunta. "
-    "(3) Cita las unidades que uses con su marcador [U<id>]. (4) Se conciso y claro."
+    "(3) Cita las unidades que uses con su marcador [U<id>]. (4) Distingue "
+    "claramente los hechos objetivos de las opiniones: cuando algo provenga de una "
+    "unidad (opinion), preséntalo como una opinión o valoración, no como un hecho. "
+    "(5) Se conciso y claro."
 )
 
 
@@ -276,6 +286,11 @@ def claim_chat(session):
     return r.json().get("chat")
 
 
+def _factuality_label(f):
+    """Spanish label for a unit's fact/opinion classification, for the prompt."""
+    return {"fact": "hecho", "opinion": "opinion"}.get(f, "sin clasificar")
+
+
 def process_chat(session):
     """Answer one queued chat turn via RAG: embed question -> vector search ->
     generate a grounded answer. Returns True if a turn was handled."""
@@ -298,7 +313,8 @@ def process_chat(session):
         results = sr.json().get("results") or []
         if results:
             context_txt = "\n".join(
-                f"[U{u['ref_id']}] {u['text']}" for u in results
+                f"[U{u['ref_id']}] ({_factuality_label(u.get('factuality'))}) {u['text']}"
+                for u in results
             )
         else:
             context_txt = "(no hay fragmentos relevantes)"

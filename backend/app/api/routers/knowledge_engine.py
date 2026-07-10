@@ -41,6 +41,12 @@ CHUNK_OVERLAP_CHARS = 100
 
 VALID_SOURCE_TYPES = {"note", "pdf", "obsidian", "transcript", "slides", "paper", "book"}
 
+# Objectivity axis of a knowledge unit, orthogonal to `role` (definition/claim/…).
+# The extractor classifies each statement as an objective, verifiable fact vs a
+# subjective opinion/evaluation. 'unknown' is the default for legacy/unclassified
+# units. Surfaced in chat context + citations so answers can flag opinions.
+VALID_FACTUALITY = {"fact", "opinion", "unknown"}
+
 # Closed vocabulary for relation types. The extractor is instructed to emit only
 # these; anything else is normalized on write (synonyms mapped, unknowns ->
 # 'related_to') so the graph stays consistent and language-agnostic.
@@ -210,6 +216,10 @@ def _ensure_schema(cur):
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS kn_unit_role_idx   ON kn_knowledge_unit(role)")
     cur.execute("CREATE INDEX IF NOT EXISTS kn_unit_status_idx ON kn_knowledge_unit(status)")
+    # Objectivity axis (fact vs opinion), added after the fact -> IF NOT EXISTS.
+    cur.execute(
+        "ALTER TABLE kn_knowledge_unit "
+        "ADD COLUMN IF NOT EXISTS factuality TEXT NOT NULL DEFAULT 'unknown'")
     cur.execute("""
         CREATE INDEX IF NOT EXISTS kn_unit_fts_idx ON kn_knowledge_unit
         USING GIN (to_tsvector('english', coalesce(content, '')))
@@ -2025,16 +2035,21 @@ def worker_result(job_id: int, payload: dict = Body(...), user: str = Depends(ge
                 continue
             role = (u.get("role") or "claim").strip()
             conf = float(u.get("confidence", 0.6))
+            factuality = (u.get("factuality") or "unknown").strip().lower()
+            if factuality not in VALID_FACTUALITY:
+                factuality = "unknown"
             basis = [{"chunk_id": b} for b in (u.get("basis_chunk_ids") or [])]
             ev, _ = _append_event(cur, actor, "unit_generated",
-                                  payload={"content": content, "role": role, "concept_ids": anchor_ids},
+                                  payload={"content": content, "role": role,
+                                           "factuality": factuality,
+                                           "concept_ids": anchor_ids},
                                   basis=basis, confidence=conf,
                                   epistemic_status="generated_machine")
             cur.execute("""
                 INSERT INTO kn_knowledge_unit
-                    (content, role, epistemic_status, confidence, create_event)
-                VALUES (%s, %s, 'generated_machine', %s, %s) RETURNING id
-            """, (content, role, conf, ev))
+                    (content, role, factuality, epistemic_status, confidence, create_event)
+                VALUES (%s, %s, %s, 'generated_machine', %s, %s) RETURNING id
+            """, (content, role, factuality, conf, ev))
             unit_id = cur.fetchone()[0]
             for cid in anchor_ids:
                 cur.execute("""
@@ -2303,6 +2318,15 @@ def kn_search(payload: dict = Body(...), user: str = Depends(get_current_user)):
         # -> kn_document.library_item_id -> lib_item. Enables clickable citations.
         if target_kind == "unit" and results:
             unit_ids = [r["ref_id"] for r in results]
+
+            # Objectivity axis (fact vs opinion) per unit.
+            cur.execute(
+                "SELECT id, factuality FROM kn_knowledge_unit WHERE id = ANY(%s)",
+                (unit_ids,))
+            fact_map = {uid: fct for uid, fct in cur.fetchall()}
+            for r in results:
+                r["factuality"] = fact_map.get(r["ref_id"], "unknown")
+
             cur.execute("""
                 SELECT u.id, d.id, d.title, d.library_item_id, li.title, li.type
                 FROM kn_knowledge_unit u

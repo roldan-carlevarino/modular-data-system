@@ -203,6 +203,7 @@ function renderAskCitations(context) {
       : "";
     return `<div class="ask-cite" title="${escapeHtml(u.text || "")}">
       <span class="ask-cite-id">[U${u.ref_id}]</span>
+      ${renderAskFactuality(u.factuality)}
       <span class="ask-cite-text">${escapeHtml(u.text || "")}</span>${sim}
       ${renderAskSource(u.sources)}
     </div>`;
@@ -211,6 +212,17 @@ function renderAskCitations(context) {
     <summary>${context.length} source${context.length === 1 ? "" : "s"}</summary>
     ${chips}
   </details>`;
+}
+
+// Objectivity badge: distinguishes a verifiable fact from a subjective opinion.
+function renderAskFactuality(factuality) {
+  if (factuality === "fact") {
+    return `<span class="ask-cite-fact ask-cite-fact--fact" title="Objective fact">hecho</span>`;
+  }
+  if (factuality === "opinion") {
+    return `<span class="ask-cite-fact ask-cite-fact--opinion" title="Subjective opinion">opinión</span>`;
+  }
+  return "";
 }
 
 // A unit can trace back to one or more source documents. When a document was

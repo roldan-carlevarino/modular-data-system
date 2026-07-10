@@ -311,6 +311,7 @@ def _ensure_schema(cur):
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS kn_chat_status_idx ON kn_chat(status, id)")
+    cur.execute("ALTER TABLE kn_chat ADD COLUMN IF NOT EXISTS history JSONB NOT NULL DEFAULT '[]'::jsonb")
 
     _SCHEMA_READY = True
 
@@ -2371,6 +2372,31 @@ def kn_search(payload: dict = Body(...), user: str = Depends(get_current_user)):
 
 CHAT_LEASE_MINUTES = 5
 
+# Conversational memory: how many prior turns the client may send and how much
+# of each answer we keep. Kept small on purpose (8GB Mac, 4B model).
+CHAT_HISTORY_MAX_TURNS = 3
+CHAT_HISTORY_ANSWER_CHARS = 600
+CHAT_HISTORY_QUESTION_CHARS = 300
+
+
+def _sanitize_history(history):
+    """Keep the last N {question, answer} turns, trimmed, for prompt context."""
+    if not isinstance(history, list):
+        return []
+    clean = []
+    for turn in history:
+        if not isinstance(turn, dict):
+            continue
+        q = (turn.get("question") or "").strip()
+        a = (turn.get("answer") or "").strip()
+        if not q and not a:
+            continue
+        clean.append({
+            "question": q[:CHAT_HISTORY_QUESTION_CHARS],
+            "answer": a[:CHAT_HISTORY_ANSWER_CHARS],
+        })
+    return clean[-CHAT_HISTORY_MAX_TURNS:]
+
 
 @router.post("/chat/ask")
 def chat_ask(payload: dict = Body(...), user: str = Depends(get_current_user)):
@@ -2380,6 +2406,7 @@ def chat_ask(payload: dict = Body(...), user: str = Depends(get_current_user)):
     if not question:
         raise HTTPException(400, "question is required")
     top_k = max(1, min(int(payload.get("top_k") or 6), 20))
+    history = _sanitize_history(payload.get("history"))
     conn = _conn()
     try:
         cur = conn.cursor()
@@ -2387,9 +2414,9 @@ def chat_ask(payload: dict = Body(...), user: str = Depends(get_current_user)):
         ev_id, _ = _append_event(cur, f"human:{user}", "chat_asked",
                                  payload={"question": question, "top_k": top_k})
         cur.execute("""
-            INSERT INTO kn_chat (question, top_k, status, create_event)
-            VALUES (%s, %s, 'pending', %s) RETURNING id
-        """, (question, top_k, ev_id))
+            INSERT INTO kn_chat (question, top_k, status, create_event, history)
+            VALUES (%s, %s, 'pending', %s, %s::jsonb) RETURNING id
+        """, (question, top_k, ev_id, json.dumps(history)))
         chat_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
@@ -2455,14 +2482,15 @@ def worker_chat_claim(payload: dict = Body(default={}), user: str = Depends(get_
             SET status = 'in_progress', worker_id = %%s,
                 attempts = c.attempts + 1, claimed_at = NOW()
             FROM nxt WHERE c.id = nxt.id
-            RETURNING c.id, c.question, c.top_k
+            RETURNING c.id, c.question, c.top_k, c.history
         """ % CHAT_LEASE_MINUTES, (worker_id,))
         row = cur.fetchone()
         conn.commit()
         cur.close()
         if not row:
             return {"chat": None}
-        return {"chat": {"id": row[0], "question": row[1], "top_k": row[2]}}
+        return {"chat": {"id": row[0], "question": row[1], "top_k": row[2],
+                         "history": row[3] or []}}
     except HTTPException:
         conn.rollback()
         raise

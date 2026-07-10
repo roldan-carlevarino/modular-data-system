@@ -256,7 +256,9 @@ CHAT_SYSTEM_PROMPT = (
     "(3) Cita las unidades que uses con su marcador [U<id>]. (4) Distingue "
     "claramente los hechos objetivos de las opiniones: cuando algo provenga de una "
     "unidad (opinion), preséntalo como una opinión o valoración, no como un hecho. "
-    "(5) Se conciso y claro."
+    "(5) Se conciso y claro. (6) Si hay una CONVERSACION PREVIA, usala solo para "
+    "entender referencias de la pregunta actual (p. ej. 'desarrolla mas', 'y eso'); "
+    "la respuesta debe seguir basandose en el CONTEXTO."
 )
 
 
@@ -324,7 +326,8 @@ PERSONAL_SYSTEM_PROMPT = (
     "su base de datos). No inventes numeros ni tendencias que no aparezcan. "
     "Responde en el mismo idioma que la pregunta, de forma breve, concreta y "
     "cercana, resaltando lo mas relevante. Si los datos indican que no hay "
-    "registros, dilo con naturalidad."
+    "registros, dilo con naturalidad. Si hay una CONVERSACION PREVIA, usala solo "
+    "para entender referencias de la pregunta actual, no para inventar datos."
 )
 
 # gym/weight/water/schedule are the only intents the summary endpoint understands.
@@ -372,14 +375,15 @@ def process_chat(session):
     chat_id = chat["id"]
     question = chat["question"]
     top_k = chat.get("top_k") or 6
+    history = chat.get("history") or []
     print(f"[chat {chat_id}] {question!r}")
     try:
         intent = classify_intent(question)
         print(f"[chat {chat_id}] intent -> {intent}")
         if intent["mode"] == "personal":
-            _answer_personal(session, chat_id, question, intent)
+            _answer_personal(session, chat_id, question, intent, history)
         else:
-            _answer_knowledge(session, chat_id, question, top_k)
+            _answer_knowledge(session, chat_id, question, top_k, history)
     except Exception as e:  # noqa: BLE001
         print(f"[chat {chat_id}] failed: {e}")
         try:
@@ -393,12 +397,31 @@ def process_chat(session):
     return True
 
 
-def _answer_personal(session, chat_id, question, intent):
+def _format_history(history):
+    """Render prior turns as a short preamble so the LLM can resolve references
+    like 'desarrolla mas' or 'y la semana pasada'. Oldest first."""
+    if not history:
+        return ""
+    lines = []
+    for turn in history:
+        q = (turn.get("question") or "").strip()
+        a = (turn.get("answer") or "").strip()
+        if q:
+            lines.append(f"Usuario: {q}")
+        if a:
+            lines.append(f"Asistente: {a}")
+    if not lines:
+        return ""
+    return "CONVERSACION PREVIA (mas antigua primero):\n" + "\n".join(lines) + "\n\n"
+
+
+def _answer_personal(session, chat_id, question, intent, history=None):
     """Answer a question about the user's own metrics from live aggregates."""
     domain = intent["domain"]
     period = intent["period_days"]
     summ = fetch_personal_summary(session, domain, period)
     user_msg = (
+        f"{_format_history(history)}"
         f"DATOS ({domain}, ultimos {period} dias):\n{summ.get('summary', '')}\n\n"
         f"PREGUNTA: {question}"
     )
@@ -415,7 +438,7 @@ def _answer_personal(session, chat_id, question, intent):
     print(f"[chat {chat_id}] answered (personal:{domain}/{period}d)")
 
 
-def _answer_knowledge(session, chat_id, question, top_k):
+def _answer_knowledge(session, chat_id, question, top_k, history=None):
     """Answer a general-knowledge question via RAG over the knowledge base."""
     qvec = run_embeddings([question])[0]
     sr = session.post(
@@ -433,7 +456,10 @@ def _answer_knowledge(session, chat_id, question, top_k):
         )
     else:
         context_txt = "(no hay fragmentos relevantes)"
-    user_msg = f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
+    user_msg = (
+        f"{_format_history(history)}"
+        f"CONTEXTO:\n{context_txt}\n\nPREGUNTA: {question}"
+    )
     answer = run_ollama_text(CHAT_SYSTEM_PROMPT, user_msg)
     rr = session.post(
         f"{API_BASE}/kn/worker/chat/result",

@@ -67,10 +67,29 @@ function autoGrowAskInput() {
   el.style.height = Math.min(el.scrollHeight, 160) + "px";
 }
 
+// Pair up completed user/assistant turns into {question, answer} for the
+// worker's short conversational memory. Only the last few pairs are sent.
+const ASK_HISTORY_TURNS = 3;
+function buildAskHistory() {
+  const turns = [];
+  for (let i = 0; i < askMessages.length; i++) {
+    const m = askMessages[i];
+    if (m.role !== "user") continue;
+    const next = askMessages[i + 1];
+    if (next && next.role === "assistant" && next.status === "done" && next.content) {
+      turns.push({ question: m.content || "", answer: next.content || "" });
+    }
+  }
+  return turns.slice(-ASK_HISTORY_TURNS);
+}
+
 async function submitAsk() {
   if (askBusy) return;
   const question = (askEls.input.value || "").trim();
   if (!question) return;
+
+  // Prior completed turns become conversational memory for the worker.
+  const history = buildAskHistory();
 
   askMessages.push({ role: "user", content: question });
   const assistantIdx = askMessages.push({
@@ -87,7 +106,7 @@ async function submitAsk() {
     const res = await fetch(`${ASK_API_BASE}/kn/chat/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, history }),
     });
     if (!res.ok) throw new Error(`ask failed (${res.status})`);
     const data = await res.json();

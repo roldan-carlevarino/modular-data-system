@@ -262,6 +262,19 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
+# Rewrites a terse follow-up into a self-contained search query using the prior
+# turns, so the vector search embeds a query that actually carries the topic.
+REWRITE_SYSTEM_PROMPT = (
+    "Reescribe la ULTIMA pregunta del usuario como una consulta de busqueda "
+    "autonoma y completa, resolviendo pronombres y referencias con la "
+    "CONVERSACION PREVIA (p. ej. 'y sus desventajas' -> 'desventajas del event "
+    "sourcing'). Reglas: (1) Devuelve SOLO la consulta reescrita, sin explicaciones "
+    "ni comillas. (2) Mismo idioma que la pregunta. (3) Si la pregunta ya es "
+    "autonoma, devuelvela tal cual. (4) No inventes temas que no aparezcan en la "
+    "conversacion. (5) Se breve (una sola frase o sintagma)."
+)
+
+
 def run_ollama_text(system, user_msg):
     """Plain (non-JSON) chat completion with the local LLM for answer generation."""
     payload = {
@@ -443,9 +456,30 @@ def _answer_personal(session, chat_id, question, intent, history=None):
     print(f"[chat {chat_id}] answered (personal:{domain}/{period}d)")
 
 
+def _standalone_query(question, history):
+    """Turn a terse follow-up into a self-contained search query using prior
+    turns, so the embedding carries the topic. Falls back to the raw question
+    when there is no history or the LLM misbehaves (empty / suspiciously long)."""
+    if not history:
+        return question
+    try:
+        user_msg = f"{_format_history(history)}ULTIMA PREGUNTA: {question}"
+        rewritten = run_ollama_text(REWRITE_SYSTEM_PROMPT, user_msg).strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] query rewrite failed, using raw question: {e}")
+        return question
+    rewritten = rewritten.strip('"').strip()
+    if not rewritten or len(rewritten) > 300:
+        return question
+    if rewritten != question:
+        print(f"[rewrite] {question!r} -> {rewritten!r}")
+    return rewritten
+
+
 def _answer_knowledge(session, chat_id, question, top_k, history=None):
     """Answer a general-knowledge question via RAG over the knowledge base."""
-    qvec = run_embeddings([question])[0]
+    search_query = _standalone_query(question, history)
+    qvec = run_embeddings([search_query])[0]
     sr = session.post(
         f"{API_BASE}/kn/search",
         json={"model": EMBED_MODEL, "vec": qvec,

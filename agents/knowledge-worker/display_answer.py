@@ -8,9 +8,10 @@ It reads newline-delimited JSON messages from STDIN, one per answer:
 
     {"question": "...", "text": "..."}
 
-and shows the latest one fullscreen with large centred text on a dark
-background. The process is launched once by voice_mode and reused; when stdin
-closes (worker exits) the window closes too. Press Esc / Cmd-Q to dismiss.
+and shows the latest one in a centred, resizable window with large centred
+text on a dark background. The process is launched once by voice_mode and
+reused; when stdin closes (worker exits) the window closes too. Press Esc /
+Cmd-Q to dismiss.
 
 Requires pyobjc (see requirements-voice.txt). Nothing here touches the network.
 """
@@ -29,9 +30,14 @@ from AppKit import (
     NSFont,
     NSScreen,
     NSTextField,
+    NSViewHeightSizable,
+    NSViewWidthSizable,
+    NSViewMinYMargin,
     NSWindow,
-    NSWindowStyleMaskBorderless,
-    NSStatusWindowLevel,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskMiniaturizable,
+    NSWindowStyleMaskResizable,
+    NSWindowStyleMaskTitled,
 )
 from Foundation import NSMakeRect
 from PyObjCTools import AppHelper
@@ -105,37 +111,47 @@ def main():
     app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
 
     screen = NSScreen.mainScreen()
-    frame = screen.frame()
-    w = frame.size.width
-    h = frame.size.height
-    margin = w * 0.05
+    sframe = screen.frame()
+    # Windowed (not fullscreen): centred, ~60% x 55% of the screen.
+    w = sframe.size.width * 0.60
+    h = sframe.size.height * 0.55
+    x = sframe.origin.x + (sframe.size.width - w) / 2
+    y = sframe.origin.y + (sframe.size.height - h) / 2
+    margin = w * 0.06
     inner = w - 2 * margin
 
+    style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+             | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
     window = KioskWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-        frame, NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False)
-    window.setLevel_(NSStatusWindowLevel)
+        NSMakeRect(x, y, w, h), style, NSBackingStoreBuffered, False)
+    window.setTitle_("Asistente")
     window.setOpaque_(True)
     window.setBackgroundColor_(DARK)
+    window.setMinSize_((420.0, 320.0))
 
     content = window.contentView()
 
-    head = _label(NSMakeRect(margin, h * 0.82, inner, h * 0.08),
-                  ACCENT, h * 0.030, True)
+    head = _label(NSMakeRect(margin, h * 0.80, inner, h * 0.10),
+                  ACCENT, h * 0.045, True)
     head.setStringValue_("ASISTENTE")
+    head.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
     content.addSubview_(head)
 
-    question = _label(NSMakeRect(margin, h * 0.68, inner, h * 0.12),
-                      GREY, h * 0.030, False)
+    question = _label(NSMakeRect(margin, h * 0.64, inner, h * 0.14),
+                      GREY, h * 0.045, False)
+    question.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
     content.addSubview_(question)
 
-    answer = _label(NSMakeRect(margin, h * 0.15, inner, h * 0.50),
-                    FG, h * 0.055, True)
+    answer = _label(NSMakeRect(margin, h * 0.08, inner, h * 0.52),
+                    FG, h * 0.075, True)
     answer.setStringValue_("Escuchando\u2026")
+    answer.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
     content.addSubview_(answer)
 
     _state["q"] = question
     _state["a"] = answer
 
+    window.center()
     window.makeKeyAndOrderFront_(None)
     app.activateIgnoringOtherApps_(True)
 

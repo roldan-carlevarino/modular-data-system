@@ -19,7 +19,7 @@ from routers.tz import local_now, local_today
 router: APIRouter = APIRouter(prefix="/insights", tags=["Insights"])
 __all__ = ["router"]
 
-VALID_DOMAINS = {"gym", "weight", "water", "schedule"}
+VALID_DOMAINS = {"gym", "weight", "water", "schedule", "focus", "math", "mental"}
 DEFAULT_PERIOD_DAYS = 30
 MAX_PERIOD_DAYS = 365
 
@@ -31,6 +31,9 @@ _DOMAIN_PATTERNS = [
     ("water", r"\bagua\b|beber|hidrat|\bml\b|vasos?"),
     ("weight", r"\bpeso\b|kilos?|\bkg\b|b[aá]scula|adelgaz|engord"),
     ("schedule", r"tarea|pendient|agenda|calendario|evento|cita|reuni|to.?do"),
+    ("focus", r"pomodoro|foco|enfoc|concentra|estudi|productiv"),
+    ("math", r"\bmate|matem|c[aá]lculo|n[uú]meros|aritm|c[aá]lcul"),
+    ("mental", r"bienestar|[aá]nimo|sue[nñ]o|dormi|estr[eé]s|humor|descans"),
 ]
 
 # Temporal expressions -> period in days. First match wins; default 30.
@@ -379,11 +382,190 @@ def _schedule_summary(cur, since, period_days):
     return " ".join(parts), data
 
 
+# --------------------------------------------------------------------------- #
+# Focus / pomodoro                                                            #
+# --------------------------------------------------------------------------- #
+
+def _focus_summary(cur, since, period_days):
+    cur.execute(
+        """
+        SELECT
+            COUNT(*),
+            COALESCE(SUM(EXTRACT(EPOCH FROM (end_time - start_time)) / 60.0), 0),
+            MAX(start_time)
+        FROM pomodoro_log
+        WHERE status = 'ended' AND start_time >= %s
+        """,
+        (since,),
+    )
+    n_sessions, total_min, last_start = cur.fetchone()
+    n_sessions = n_sessions or 0
+
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM pomodoro_event
+        WHERE type = 'study' AND started >= %s
+        """,
+        (since,),
+    )
+    study_blocks = cur.fetchone()[0] or 0
+
+    total_min = float(total_min or 0)
+    data = {
+        "sessions": int(n_sessions),
+        "total_minutes": round(total_min),
+        "study_blocks": int(study_blocks),
+        "last_session": last_start.isoformat() if last_start else None,
+    }
+
+    if n_sessions == 0:
+        return "No hay sesiones de pomodoro registradas en el periodo.", data
+
+    per_week = n_sessions / (period_days / 7.0) if period_days else n_sessions
+    hours = total_min / 60.0
+    parts = [
+        f"En los últimos {period_days} días has hecho {n_sessions} "
+        f"{'sesión' if n_sessions == 1 else 'sesiones'} de pomodoro "
+        f"({_fmt_num(per_week, 1)}/semana)."
+    ]
+    parts.append(
+        f"Tiempo total enfocado: {_fmt_num(hours, 1)} h ({round(total_min)} min) "
+        f"en {study_blocks} bloques de estudio."
+    )
+    if last_start:
+        days_since = (local_today() - last_start.date()).days
+        if days_since == 0:
+            parts.append("Última sesión: hoy.")
+        elif days_since == 1:
+            parts.append("Última sesión: ayer.")
+        else:
+            parts.append(f"Última sesión: hace {days_since} días.")
+    return " ".join(parts), data
+
+
+# --------------------------------------------------------------------------- #
+# Math trainer                                                                #
+# --------------------------------------------------------------------------- #
+
+def _math_summary(cur, since, period_days):
+    cur.execute(
+        """
+        SELECT
+            COUNT(*),
+            COALESCE(SUM(correct), 0),
+            COALESCE(SUM(wrong), 0),
+            COALESCE(SUM(duration_s), 0),
+            AVG(NULLIF(score_per_min, 0)),
+            AVG(avg_latency_ms),
+            MAX(started_at)
+        FROM math_session
+        WHERE started_at >= %s
+        """,
+        (since,),
+    )
+    n_sessions, correct, wrong, dur_s, avg_spm, avg_lat, last_at = cur.fetchone()
+    n_sessions = n_sessions or 0
+    correct = int(correct or 0)
+    wrong = int(wrong or 0)
+    total = correct + wrong
+    accuracy = round(100.0 * correct / total) if total else None
+
+    data = {
+        "sessions": int(n_sessions),
+        "correct": correct,
+        "wrong": wrong,
+        "accuracy": accuracy,
+        "practice_minutes": round(float(dur_s or 0) / 60.0),
+        "avg_score_per_min": round(float(avg_spm), 1) if avg_spm is not None else None,
+        "avg_latency_ms": int(avg_lat) if avg_lat is not None else None,
+        "last_session": last_at.isoformat() if last_at else None,
+    }
+
+    if n_sessions == 0:
+        return "No hay sesiones de entrenamiento mental (mates) en el periodo.", data
+
+    per_week = n_sessions / (period_days / 7.0) if period_days else n_sessions
+    parts = [
+        f"En los últimos {period_days} días has hecho {n_sessions} "
+        f"{'sesión' if n_sessions == 1 else 'sesiones'} de mates "
+        f"({_fmt_num(per_week, 1)}/semana, {data['practice_minutes']} min en total)."
+    ]
+    if total:
+        parts.append(
+            f"Aciertos: {correct} de {total} ({accuracy}% de acierto)."
+        )
+    if avg_spm is not None:
+        parts.append(f"Ritmo medio: {_fmt_num(avg_spm, 1)} puntos/min.")
+    if avg_lat is not None:
+        parts.append(f"Latencia media por respuesta: {int(avg_lat)} ms.")
+    return " ".join(parts), data
+
+
+# --------------------------------------------------------------------------- #
+# Mental / wellbeing                                                          #
+# --------------------------------------------------------------------------- #
+
+def _mental_summary(cur, since, period_days):
+    cur.execute(
+        """
+        SELECT
+            AVG(sleep_hours), MIN(sleep_hours), MAX(sleep_hours),
+            AVG(stress), COUNT(*)
+        FROM mental_log
+        WHERE date >= %s
+        """,
+        (since,),
+    )
+    avg_sleep, min_sleep, max_sleep, avg_stress, n = cur.fetchone()
+    n = n or 0
+
+    cur.execute(
+        "SELECT date, sleep_hours, stress FROM mental_log ORDER BY date DESC LIMIT 1"
+    )
+    latest = cur.fetchone()
+
+    data = {
+        "entries": int(n),
+        "avg_sleep": round(float(avg_sleep), 1) if avg_sleep is not None else None,
+        "min_sleep": float(min_sleep) if min_sleep is not None else None,
+        "max_sleep": float(max_sleep) if max_sleep is not None else None,
+        "avg_stress": round(float(avg_stress), 1) if avg_stress is not None else None,
+        "latest_date": latest[0].isoformat() if latest else None,
+        "latest_sleep": float(latest[1]) if latest and latest[1] is not None else None,
+        "latest_stress": int(latest[2]) if latest and latest[2] is not None else None,
+    }
+
+    if n == 0:
+        return "No hay registros de bienestar (sueño/estrés) en el periodo.", data
+
+    parts = [f"Bienestar en los últimos {period_days} días ({n} {'registro' if n == 1 else 'registros'})."]
+    if avg_sleep is not None:
+        parts.append(
+            f"Sueño medio: {_fmt_num(avg_sleep, 1)} h "
+            f"(rango {_fmt_num(min_sleep, 1)}–{_fmt_num(max_sleep, 1)} h)."
+        )
+    if avg_stress is not None:
+        parts.append(f"Estrés medio: {_fmt_num(avg_stress, 1)}/5.")
+    if latest:
+        extras = []
+        if latest[1] is not None:
+            extras.append(f"{_fmt_num(latest[1], 1)} h de sueño")
+        if latest[2] is not None:
+            extras.append(f"estrés {int(latest[2])}/5")
+        if extras:
+            parts.append(f"Último registro ({latest[0].isoformat()}): {', '.join(extras)}.")
+    return " ".join(parts), data
+
+
 _DISPATCH = {
     "gym": _gym_summary,
     "weight": _weight_summary,
     "water": _water_summary,
     "schedule": _schedule_summary,
+    "focus": _focus_summary,
+    "math": _math_summary,
+    "mental": _mental_summary,
 }
 
 

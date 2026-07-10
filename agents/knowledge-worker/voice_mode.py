@@ -39,6 +39,8 @@ Config via environment variables:
   VOICE_MIN_SPEECH_MS   Min speech before endpointing (ms)  (default 300)
   CHAT_TOP_K            RAG neighbours to retrieve          (default 6)
   AUDIO_INPUT_DEVICE    Mic index/name (empty = system default)
+  SHOW_POPUP         1 to show the answer fullscreen        (default 1 on macOS)
+  POPUP_SECONDS      Seconds the pop-up stays (0 = until dismissed, default 15)
   SPEAK              1 to speak answers via `say`           (default 1 on macOS)
   SPEAK_VOICE        macOS voice name                       (default system)
 """
@@ -54,6 +56,7 @@ import time
 WAKEWORD_MODEL = os.environ.get("WAKEWORD_MODEL", "hey_jarvis")
 WAKEWORD_THRESHOLD = float(os.environ.get("WAKEWORD_THRESHOLD", "0.5"))
 WAKEWORD_FRAMEWORK = os.environ.get("WAKEWORD_FRAMEWORK", "onnx")
+WAKEWORD_DEBUG = os.environ.get("WAKEWORD_DEBUG", "0") == "1"
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "medium")
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE = os.environ.get("WHISPER_COMPUTE", "int8")
@@ -72,6 +75,9 @@ AUDIO_INPUT_DEVICE = (int(_dev) if _dev.lstrip("-").isdigit() else _dev) or None
 _IS_MAC = platform.system() == "Darwin"
 SPEAK = os.environ.get("SPEAK", "1" if _IS_MAC else "0") == "1"
 SPEAK_VOICE = os.environ.get("SPEAK_VOICE", "")
+# Fullscreen pop-up showing the answer text (launched as a separate process).
+SHOW_POPUP = os.environ.get("SHOW_POPUP", "1" if _IS_MAC else "0") == "1"
+_POPUP_SCRIPT = os.path.join(os.path.dirname(__file__), "display_answer.py")
 
 _FRAME = 1280  # openWakeWord expects 80 ms frames at 16 kHz
 _FRAME_MS = 80
@@ -88,6 +94,8 @@ class VoiceMode:
         self._interrupt = interrupt_event
         self._history = []
         self._whisper = None
+        self._stop = threading.Event()
+        self._popup_proc = None
         self._thread = threading.Thread(target=self._run, name="voice", daemon=True)
 
     def start(self):
@@ -135,11 +143,13 @@ class VoiceMode:
         stream.start()
         print("[voice] escuchando... (di la palabra de activación)")
         try:
-            while True:
+            while not self._stop.is_set():
                 frame, _ = stream.read(_FRAME)
                 frame = frame.flatten()
                 scores = self._oww.predict(frame)
                 score = scores.get(self._wake_key, 0.0)
+                if WAKEWORD_DEBUG and score >= 0.1:
+                    print(f"[voice] score={score:.2f} (rms={self._rms(frame):.3f})")
                 if score >= WAKEWORD_THRESHOLD:
                     self._handle_activation(stream)
         except Exception as e:  # noqa: BLE001
@@ -147,6 +157,15 @@ class VoiceMode:
         finally:
             stream.stop()
             stream.close()
+
+    def stop(self):
+        """Signal the listener to finish its current frame and close the audio
+        stream cleanly (avoids a native segfault on Ctrl+C)."""
+        self._stop.set()
+        if self._popup_proc and self._popup_proc.poll() is None:
+            self._popup_proc.terminate()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
 
     def _handle_activation(self, stream):
         self._pause.set()  # main loop yields Ollama to us
@@ -168,6 +187,7 @@ class VoiceMode:
                 session, question, self._history[-VOICE_HISTORY_TURNS:], CHAT_TOP_K)
             print(f"[voice] intent -> {intent}")
             print(f"[voice] Asistente: {answer}")
+            self._show_popup(answer)
             self._speak(answer)
             self._history.append({"question": question, "answer": answer})
             self._history = self._history[-VOICE_HISTORY_TURNS:]
@@ -215,3 +235,23 @@ class VoiceMode:
             subprocess.run(cmd, check=False)
         except Exception as e:  # noqa: BLE001
             print(f"[voice] TTS failed: {e}", file=sys.stderr)
+
+    def _show_popup(self, text):
+        """Show the answer fullscreen via the separate display process. The
+        previous pop-up (if any) is closed first."""
+        if not SHOW_POPUP:
+            return
+        clean = _SPEAK_CLEAN.sub("", text).strip()
+        if not clean:
+            return
+        try:
+            if self._popup_proc and self._popup_proc.poll() is None:
+                self._popup_proc.terminate()
+            self._popup_proc = subprocess.Popen(
+                [sys.executable, _POPUP_SCRIPT],
+                stdin=subprocess.PIPE, text=True)
+            self._popup_proc.stdin.write(clean)
+            self._popup_proc.stdin.close()
+        except Exception as e:  # noqa: BLE001
+            print(f"[voice] popup failed: {e}", file=sys.stderr)
+

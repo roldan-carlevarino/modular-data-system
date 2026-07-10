@@ -588,6 +588,7 @@ def main():
     holder = {"session": session}
 
     pause_event = None
+    voice = None
     if VOICE_ENABLED:
         try:
             from voice_mode import VoiceMode
@@ -604,33 +605,38 @@ def main():
             print(f"[voice] disabled: {e}")
             pause_event = None
 
-    while True:
-        # While a voice interaction is running, give it exclusive use of Ollama:
-        # do not claim chats / extraction / embedding jobs.
-        if pause_event is not None and pause_event.is_set():
-            time.sleep(0.2)
-            continue
-        try:
-            # Priority: chat turns (a human is waiting) > extraction > embed backfill.
-            handled = process_chat(holder["session"])
-            if not handled:
-                handled = process_one(holder["session"])
-            if not handled:
-                # Idle: use the time to backfill embeddings.
-                handled = process_embeddings(holder["session"])
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 401:
-                print("[auth] token expired, re-logging in")
-                token = login()
-                holder["session"] = make_session(token)
+    try:
+        while True:
+            # While a voice interaction is running, give it exclusive use of
+            # Ollama: do not claim chats / extraction / embedding jobs.
+            if pause_event is not None and pause_event.is_set():
+                time.sleep(0.2)
                 continue
-            print(f"[error] HTTP: {e}")
-            handled = False
-        except Exception as e:  # noqa: BLE001
-            print(f"[error] {e}")
-            handled = False
-        if not handled:
-            time.sleep(POLL_INTERVAL)
+            try:
+                # Priority: chat turns (human waiting) > extraction > embed backfill.
+                handled = process_chat(holder["session"])
+                if not handled:
+                    handled = process_one(holder["session"])
+                if not handled:
+                    # Idle: use the time to backfill embeddings.
+                    handled = process_embeddings(holder["session"])
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 401:
+                    print("[auth] token expired, re-logging in")
+                    token = login()
+                    holder["session"] = make_session(token)
+                    continue
+                print(f"[error] HTTP: {e}")
+                handled = False
+            except Exception as e:  # noqa: BLE001
+                print(f"[error] {e}")
+                handled = False
+            if not handled:
+                time.sleep(POLL_INTERVAL)
+    finally:
+        # Close the audio stream cleanly so Ctrl+C doesn't segfault in PortAudio.
+        if voice is not None:
+            voice.stop()
 
 
 if __name__ == "__main__":

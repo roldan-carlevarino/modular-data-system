@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="careers/careers.css">
   <link rel="stylesheet" href="map/map.css">
   <link rel="stylesheet" href="system/system.css">
+  <link rel="stylesheet" href="ask/ask.css">
 
   <!-- KaTeX -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
@@ -78,6 +79,7 @@
   <script src="https://unpkg.com/cose-base/cose-base.js"></script>
   <script src="https://unpkg.com/cytoscape-fcose/cytoscape-fcose.js"></script>
   <script defer src="map/map.js"></script>
+  <script defer src="ask/ask.js"></script>
 </head>
 
 <body>
@@ -144,6 +146,7 @@
     <input type="radio" name="tab" id="tab12">
     <input type="radio" name="tab" id="tab13">
     <input type="radio" name="tab" id="tab14">
+    <input type="radio" name="tab" id="tab15">
 
     <div class="tab-labels">
       <label for="tab1">Home</label>
@@ -160,6 +163,7 @@
       <label for="tab12">Library</label>
       <label for="tab13">Careers</label>
       <label for="tab14">Map</label>
+      <label for="tab15">Ask</label>
     </div>
 
     <div class="tab-content">
@@ -1862,6 +1866,25 @@
             <div id="mapInfo" class="map-info" style="display:none"></div>
             <p id="mapStatus" class="map-status" aria-live="polite"></p>
           </div>
+        </section>
+      </div>
+
+      <!-- ====== TAB 15: ASK ====== -->
+      <div class="content c15">
+        <section class="ask-section">
+          <header class="ask-header">
+            <div>
+              <h2 class="ask-title">Ask</h2>
+              <p class="ask-subtitle">Answers are grounded in your knowledge base and cite the units used.</p>
+            </div>
+            <button id="askNewChat" class="ask-newchat" type="button">New conversation</button>
+          </header>
+          <div id="askMessages" class="ask-messages" aria-live="polite"></div>
+          <form id="askForm" class="ask-inputbar">
+            <textarea id="askInput" class="ask-input" rows="1"
+                      placeholder="Ask your knowledge base…" autocomplete="off"></textarea>
+            <button id="askSend" type="submit" class="ask-send">Send</button>
+          </form>
         </section>
       </div>
 

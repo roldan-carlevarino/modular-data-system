@@ -309,7 +309,8 @@ label {
 #tab11:checked ~ .tab-labels label[for="tab11"],
 #tab12:checked ~ .tab-labels label[for="tab12"],
 #tab13:checked ~ .tab-labels label[for="tab13"],
-#tab14:checked ~ .tab-labels label[for="tab14"] {
+#tab14:checked ~ .tab-labels label[for="tab14"],
+#tab15:checked ~ .tab-labels label[for="tab15"] {
   background: transparent;
   color: var(--text-primary);
   font-weight: 600;
@@ -329,7 +330,8 @@ label {
 #tab11:checked ~ .tab-labels label[for="tab11"]::after,
 #tab12:checked ~ .tab-labels label[for="tab12"]::after,
 #tab13:checked ~ .tab-labels label[for="tab13"]::after,
-#tab14:checked ~ .tab-labels label[for="tab14"]::after {
+#tab14:checked ~ .tab-labels label[for="tab14"]::after,
+#tab15:checked ~ .tab-labels label[for="tab15"]::after {
   content: '';
   position: absolute;
   left: 0.5rem; right: 0.5rem; bottom: -1px;
@@ -366,6 +368,10 @@ label {
 #tab12:checked ~ .tab-content .c12,
 #tab13:checked ~ .tab-content .c13,
 #tab14:checked ~ .tab-content .c14 {
+  display: block;
+}
+
+#tab15:checked ~ .tab-content .c15 {
   display: block;
 }
 

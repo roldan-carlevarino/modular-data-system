@@ -8,6 +8,7 @@ the model to phrase an answer grounded in real numbers.
 """
 
 import os
+import re
 from datetime import timedelta
 
 import psycopg2
@@ -21,6 +22,40 @@ __all__ = ["router"]
 VALID_DOMAINS = {"gym", "weight", "water", "schedule"}
 DEFAULT_PERIOD_DAYS = 30
 MAX_PERIOD_DAYS = 365
+
+# Rule-based router: maps free text to a domain without an LLM. Order matters —
+# the first matching pattern wins. Lets tiny clients (e.g. the T-Watch) hit
+# /insights/ask?q=... with a raw phrase and get an answer, no Mac/LLM involved.
+_DOMAIN_PATTERNS = [
+    ("gym", r"entren|gimnas|\bgym\b|pesas|rutina|ejercic|muscula"),
+    ("water", r"\bagua\b|beber|hidrat|\bml\b|vasos?"),
+    ("weight", r"\bpeso\b|kilos?|\bkg\b|b[aá]scula|adelgaz|engord"),
+    ("schedule", r"tarea|pendient|agenda|calendario|evento|cita|reuni|to.?do"),
+]
+
+# Temporal expressions -> period in days. First match wins; default 30.
+_PERIOD_PATTERNS = [
+    (1, r"\bhoy\b|\bdia\b|\bd[ií]a\b"),
+    (7, r"semana"),
+    (30, r"\bmes\b|mensual"),
+    (365, r"\ba[ñn]o\b|anual"),
+]
+
+
+def _route(q):
+    """Map a free-text question to (domain|None, period_days) using keywords."""
+    t = (q or "").lower()
+    domain = None
+    for name, pattern in _DOMAIN_PATTERNS:
+        if re.search(pattern, t):
+            domain = name
+            break
+    period = DEFAULT_PERIOD_DAYS
+    for days, pattern in _PERIOD_PATTERNS:
+        if re.search(pattern, t):
+            period = days
+            break
+    return domain, period
 
 
 def _get_conn():
@@ -352,17 +387,8 @@ _DISPATCH = {
 }
 
 
-@router.get("/summary")
-def personal_summary(
-    domain: str = Query(..., description="One of: gym, weight, water, schedule"),
-    period_days: int = Query(DEFAULT_PERIOD_DAYS, ge=1, le=MAX_PERIOD_DAYS),
-):
-    """Return a real-time aggregate summary of a personal-data domain over the
-    last `period_days`. `summary` is a ready-to-read text; `data` is structured."""
-    domain = (domain or "").strip().lower()
-    if domain not in VALID_DOMAINS:
-        raise HTTPException(400, f"domain must be one of {sorted(VALID_DOMAINS)}")
-
+def _build_summary(domain, period_days):
+    """Run the SQL aggregate for a domain and return the response dict."""
     since = local_today() - timedelta(days=period_days)
     conn = _get_conn()
     try:
@@ -376,9 +402,50 @@ def personal_summary(
             "summary": summary,
             "data": data,
         }
+    finally:
+        conn.close()
+
+
+@router.get("/summary")
+def personal_summary(
+    domain: str = Query(..., description="One of: gym, weight, water, schedule"),
+    period_days: int = Query(DEFAULT_PERIOD_DAYS, ge=1, le=MAX_PERIOD_DAYS),
+):
+    """Return a real-time aggregate summary of a personal-data domain over the
+    last `period_days`. `summary` is a ready-to-read text; `data` is structured."""
+    domain = (domain or "").strip().lower()
+    if domain not in VALID_DOMAINS:
+        raise HTTPException(400, f"domain must be one of {sorted(VALID_DOMAINS)}")
+    try:
+        return _build_summary(domain, period_days)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"insights/{domain} failed: {e}")
-    finally:
-        conn.close()
+
+
+@router.get("/ask")
+def personal_ask(
+    q: str = Query(..., description="Free-text question, e.g. 'cómo llevo los entrenamientos esta semana'"),
+):
+    """Rule-based (no-LLM) entry point for tiny clients: parse a free-text
+    question into a domain + period with keywords, then return the aggregate
+    summary. `matched` is False when no personal domain is recognized."""
+    domain, period_days = _route(q)
+    if domain is None:
+        return {
+            "matched": False,
+            "domain": None,
+            "period_days": period_days,
+            "summary": "",
+            "data": None,
+        }
+    try:
+        result = _build_summary(domain, period_days)
+        result["matched"] = True
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"insights/ask failed: {e}")
+

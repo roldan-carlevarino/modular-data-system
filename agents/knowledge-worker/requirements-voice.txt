@@ -7,4 +7,7 @@ sounddevice>=0.4.6
 numpy>=1.24
 faster-whisper>=1.0.0
 # Fullscreen answer pop-up (native Cocoa window; macOS only, SHOW_POPUP=1).
-pyobjc-framework-Cocoa>=9.0; sys_platform == "darwin"
+# Pinned to a release that ships prebuilt cp39 wheels so nothing is compiled
+# (newer pyobjc has no Python 3.9 wheel and would need Xcode to build).
+pyobjc-core==9.2; sys_platform == "darwin"
+pyobjc-framework-Cocoa==9.2; sys_platform == "darwin"

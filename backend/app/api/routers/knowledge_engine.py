@@ -673,13 +673,29 @@ def ingest_from_library(payload: dict = Body(...), user: str = Depends(get_curre
         _ensure_schema(cur)
 
         cur.execute("""
-            SELECT title, type, coalesce(summary, ''), coalesce(authors, '')
+            SELECT title, type, coalesce(summary, ''), coalesce(authors::text, '')
             FROM lib_item WHERE id = %s
         """, (lib_id,))
         item = cur.fetchone()
         if not item:
             raise HTTPException(404, "library item not found")
-        title, lib_type, summary, authors = item
+        title, lib_type, summary, authors_raw = item
+
+        # authors is a JSONB array of {"name": ...} objects; flatten to names.
+        authors = ""
+        if authors_raw:
+            try:
+                parsed = json.loads(authors_raw)
+                if isinstance(parsed, list):
+                    names = [
+                        (a.get("name") if isinstance(a, dict) else str(a))
+                        for a in parsed
+                    ]
+                    authors = ", ".join(n for n in names if n)
+                elif isinstance(parsed, str):
+                    authors = parsed
+            except (ValueError, TypeError):
+                authors = authors_raw
 
         cur.execute("""
             SELECT coalesce(body_md, '') FROM lib_note

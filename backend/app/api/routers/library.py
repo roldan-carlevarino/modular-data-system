@@ -15,6 +15,7 @@ Status field accepts any string but the UI exposes:
 - competition: wishlist | upcoming | active | submitted | done | abandoned
 """
 
+import io
 import json
 import mimetypes
 import os
@@ -1044,6 +1045,178 @@ def _fetch_isbn(isbn: str) -> dict:
             "source": "openlibrary",
         },
     }
+
+
+def _clean_doi(doi: str) -> str:
+    """Trim trailing punctuation that regularly clings to DOIs in PDF text."""
+    return re.sub(r"[.,;:)\]\}>\"']+$", "", (doi or "").strip())
+
+
+def _extract_pdf_info(content: bytes) -> dict:
+    """Read the first pages of a PDF and pull out any identifier plus the
+    embedded document metadata. Returns a dict with keys:
+    doi, arxiv_id, embedded_title, embedded_authors, first_lines.
+    """
+    info = {
+        "doi": None,
+        "arxiv_id": None,
+        "embedded_title": None,
+        "embedded_authors": None,
+        "first_lines": [],
+    }
+    try:
+        import pdfplumber
+    except Exception:
+        return info
+
+    try:
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            meta = pdf.metadata or {}
+            info["embedded_title"] = (meta.get("Title") or "").strip() or None
+            info["embedded_authors"] = (meta.get("Author") or "").strip() or None
+            text = ""
+            for page in pdf.pages[:3]:
+                try:
+                    text += (page.extract_text() or "") + "\n"
+                except Exception:
+                    continue
+    except Exception:
+        return info
+
+    # arXiv id (new-style 1234.56789 or old-style cs.LG/0102003)
+    m = re.search(
+        r"arxiv[:\s]*((?:[a-z\-]+(?:\.[A-Z]{2})?/\d{7})|(?:\d{4}\.\d{4,5}))(v\d+)?",
+        text, re.I,
+    )
+    if m:
+        info["arxiv_id"] = m.group(1)
+
+    # DOI
+    m = re.search(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", text)
+    if m:
+        info["doi"] = _clean_doi(m.group(0))
+
+    # First non-empty lines (fallback title guess)
+    info["first_lines"] = [ln.strip() for ln in text.splitlines() if ln.strip()][:6]
+    return info
+
+
+def _draft_from_pdf(content: bytes, filename: str) -> dict:
+    """Best-effort metadata draft for an uploaded PDF. Tries, in order:
+    arXiv id → DOI → embedded PDF metadata / first-line heuristics."""
+    info = _extract_pdf_info(content)
+
+    if info["arxiv_id"]:
+        try:
+            draft = _fetch_arxiv(info["arxiv_id"])
+            draft.setdefault("metadata", {})["source"] = "pdf+arxiv"
+            return draft
+        except HTTPException:
+            pass
+
+    if info["doi"]:
+        try:
+            draft = _fetch_doi(info["doi"])
+            draft.setdefault("metadata", {})["source"] = "pdf+crossref"
+            return draft
+        except HTTPException:
+            pass
+
+    # Fallback: use embedded metadata / first line as the title.
+    title = info["embedded_title"]
+    if not title and info["first_lines"]:
+        # The first reasonably long line is usually the title.
+        for ln in info["first_lines"]:
+            if len(ln) > 8:
+                title = ln
+                break
+    if not title:
+        title = re.sub(r"\.pdf$", "", filename or "Untitled", flags=re.I)
+
+    authors = []
+    if info["embedded_authors"]:
+        for name in re.split(r"[;,]| and ", info["embedded_authors"]):
+            name = name.strip()
+            if name:
+                authors.append({"name": name})
+
+    return {
+        "type": "paper",
+        "title": title.strip(),
+        "year": None,
+        "authors": authors,
+        "summary": None,
+        "external_id": None,
+        "primary_url": None,
+        "metadata": {"source": "pdf"},
+    }
+
+
+@router.post("/import-pdf")
+async def import_pdf(
+    file: UploadFile = File(...),
+    save: bool = Form(False),
+    status: str = Form("wishlist"),
+):
+    """Extract metadata straight from an uploaded PDF.
+
+    - save=false → returns { "draft": {...} } for preview / auto-fill.
+    - save=true  → creates the item, uploads the PDF and returns
+                   { "id": <item_id>, "draft": {...} }.
+    """
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file")
+
+    draft = _draft_from_pdf(content, file.filename or "")
+
+    if not save:
+        return {"draft": draft}
+
+    created = create_item({
+        "type": draft["type"],
+        "title": draft["title"] or "(untitled)",
+        "year": draft.get("year"),
+        "status": status or "wishlist",
+        "authors": draft.get("authors") or [],
+        "external_id": draft.get("external_id"),
+        "primary_url": draft.get("primary_url"),
+        "summary": draft.get("summary"),
+        "metadata": draft.get("metadata") or {},
+    })
+    item_id = created["id"]
+
+    # Upload the PDF and point the new item at it.
+    try:
+        api, bucket = _get_b2()
+        safe = _safe_filename(file.filename)
+        b2_path = f"library/{item_id}/{int(time.time())}_{safe}"
+        content_type = (
+            file.content_type
+            or mimetypes.guess_type(file.filename or "")[0]
+            or "application/pdf"
+        )
+        bucket.upload_bytes(
+            data_bytes=content,
+            file_name=b2_path,
+            content_type=content_type,
+        )
+        conn = _conn()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE lib_item SET file_path = %s, updated_at = NOW() WHERE id = %s",
+                (b2_path, item_id),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+    except Exception as e:
+        # Item was created; surface the upload problem but keep the record.
+        raise HTTPException(500, f"Item created ({item_id}) but PDF upload failed: {e}")
+
+    return {"id": item_id, "draft": draft}
 
 
 @router.post("/import")

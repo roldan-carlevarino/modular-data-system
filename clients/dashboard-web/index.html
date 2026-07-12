@@ -1358,7 +1358,7 @@
             </div>
             <div class="library__header-actions">
               <input type="search" id="libSearch" class="library__search" placeholder="Search title, author, abstract…">
-              <button id="libImportBtn" class="library__btn library__btn--ghost" title="Import by DOI / arXiv / ISBN">Import</button>
+              <button id="libImportBtn" class="library__btn library__btn--ghost" title="Import by DOI / arXiv / ISBN or attach a PDF">Import</button>
               <button id="libNewBtn" class="library__btn library__btn--primary">New item</button>
             </div>
           </header>
@@ -1494,6 +1494,12 @@
               <p class="library__hint">Paste a DOI, arXiv ID or ISBN. Type is auto-detected.</p>
               <input id="libImportInput" type="text" class="library__input"
                      placeholder="10.1234/abcd  ·  arxiv:2305.12345  ·  9780131103627">
+              <div class="library__import-divider"><span>or</span></div>
+              <label for="libImportPdf" class="library__btn library__btn--ghost library__import-pdf-btn">
+                📄 Attach a PDF — auto-fill from the paper
+              </label>
+              <input id="libImportPdf" type="file" accept="application/pdf" hidden>
+              <div id="libImportPdfName" class="library__hint"></div>
               <div id="libImportPreview" class="library__import-preview"></div>
             </div>
             <footer class="library__modal-foot">

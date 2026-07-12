@@ -690,3 +690,32 @@ textarea.library__input {
     max-height: 8rem;
     overflow-y: auto;
 }
+
+/* Import: PDF attach */
+.library__import-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.7rem 0;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.library__import-divider::before,
+.library__import-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border-color);
+}
+.library__import-pdf-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+}
+#libImportPdfName {
+    margin-top: 0.35rem;
+    word-break: break-all;
+}

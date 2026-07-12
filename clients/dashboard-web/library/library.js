@@ -23,6 +23,7 @@
         editing: null,        // null = new, otherwise existing id
         editingCollection: null, // null = new, otherwise collection object
         importDraft: null,
+        importPdf: null,      // File object when importing from a PDF
     };
 
     // ---- API helpers ----
@@ -107,6 +108,7 @@
         $('libImportInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') { e.preventDefault(); fetchImport(); }
         });
+        $('libImportPdf').addEventListener('change', fetchImportPdf);
 
         // Lazy load when the tab becomes active
         const tab = $('tab12');
@@ -620,7 +622,10 @@
     // ---- Import modal ----
     function openImportModal() {
         state.importDraft = null;
+        state.importPdf = null;
         $('libImportInput').value = '';
+        $('libImportPdf').value = '';
+        $('libImportPdfName').textContent = '';
         $('libImportPreview').innerHTML = '';
         $('libImportSave').disabled = true;
         $('libImportModal').style.display = 'flex';
@@ -628,39 +633,77 @@
     }
     function closeImportModal() { $('libImportModal').style.display = 'none'; }
 
+    function renderImportPreview(d) {
+        $('libImportPreview').innerHTML = `
+            <div class="library__import-card">
+                <div class="library__card-type library__card-type--${d.type}">${typeLabel(d.type)}</div>
+                <h4>${escapeHtml(d.title || '(untitled)')}</h4>
+                <div class="library__hint">${(d.authors || []).map(a => escapeHtml(a.name)).join(', ')}${d.year ? ` · ${d.year}` : ''}</div>
+                ${d.summary ? `<p class="library__import-summary">${escapeHtml(d.summary).slice(0, 400)}${d.summary.length > 400 ? '…' : ''}</p>` : ''}
+                <div class="library__hint">${escapeHtml(d.external_id || '')}</div>
+            </div>
+        `;
+    }
+
     async function fetchImport() {
         const value = $('libImportInput').value.trim();
         if (!value) return;
+        state.importPdf = null;
+        $('libImportPdf').value = '';
+        $('libImportPdfName').textContent = '';
         $('libImportPreview').innerHTML = '<div class="library__hint">Fetching…</div>';
         $('libImportSave').disabled = true;
         try {
             const r = await apiJson('/library/import', 'POST', { value, save: false });
             state.importDraft = r.draft;
-            const d = r.draft;
-            $('libImportPreview').innerHTML = `
-                <div class="library__import-card">
-                    <div class="library__card-type library__card-type--${d.type}">${typeLabel(d.type)}</div>
-                    <h4>${escapeHtml(d.title || '(untitled)')}</h4>
-                    <div class="library__hint">${(d.authors || []).map(a => escapeHtml(a.name)).join(', ')}${d.year ? ` · ${d.year}` : ''}</div>
-                    ${d.summary ? `<p class="library__import-summary">${escapeHtml(d.summary).slice(0, 400)}${d.summary.length > 400 ? '…' : ''}</p>` : ''}
-                    <div class="library__hint">${escapeHtml(d.external_id || '')}</div>
-                </div>
-            `;
+            renderImportPreview(r.draft);
             $('libImportSave').disabled = false;
         } catch (e) {
             $('libImportPreview').innerHTML = `<div class="library__error">${escapeHtml(e.message)}</div>`;
         }
     }
 
-    async function saveImport() {
-        const value = $('libImportInput').value.trim();
-        if (!value) return;
+    async function fetchImportPdf(e) {
+        const f = e.target.files[0];
+        if (!f) return;
+        state.importPdf = f;
+        $('libImportInput').value = '';
+        $('libImportPdfName').textContent = f.name;
+        $('libImportPreview').innerHTML = '<div class="library__hint">Reading PDF…</div>';
+        $('libImportSave').disabled = true;
         try {
-            const r = await apiJson('/library/import', 'POST', { value, save: true });
-            state.selectedId = r.id;
+            const fd = new FormData();
+            fd.append('file', f);
+            fd.append('save', 'false');
+            const r = await api('/library/import-pdf', { method: 'POST', body: fd });
+            state.importDraft = r.draft;
+            renderImportPreview(r.draft);
+            $('libImportSave').disabled = false;
+        } catch (err) {
+            state.importPdf = null;
+            $('libImportPreview').innerHTML = `<div class="library__error">${escapeHtml(err.message)}</div>`;
+        }
+    }
+
+    async function saveImport() {
+        try {
+            let newId;
+            if (state.importPdf) {
+                const fd = new FormData();
+                fd.append('file', state.importPdf);
+                fd.append('save', 'true');
+                const r = await api('/library/import-pdf', { method: 'POST', body: fd });
+                newId = r.id;
+            } else {
+                const value = $('libImportInput').value.trim();
+                if (!value) return;
+                const r = await apiJson('/library/import', 'POST', { value, save: true });
+                newId = r.id;
+            }
+            state.selectedId = newId;
             closeImportModal();
             await refreshAll();
-            renderDetail(r.id);
+            renderDetail(newId);
         } catch (e) { alert(`Save failed: ${e.message}`); }
     }
 

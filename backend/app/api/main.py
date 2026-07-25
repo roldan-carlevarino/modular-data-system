@@ -59,11 +59,11 @@ def _run_migrations():
             )
         """)
 
-        # ---- Library (mini-Zotero): papers, books, competitions ----
+        # ---- Library (mini-Zotero): papers, books, competitions, websites ----
         cur.execute("""
             CREATE TABLE IF NOT EXISTS lib_item (
                 id SERIAL PRIMARY KEY,
-                type TEXT NOT NULL CHECK (type IN ('paper', 'book', 'competition')),
+                type TEXT NOT NULL CHECK (type IN ('paper', 'book', 'competition', 'website')),
                 title TEXT NOT NULL,
                 year INTEGER,
                 status TEXT NOT NULL DEFAULT 'wishlist',
@@ -82,6 +82,12 @@ def _run_migrations():
         # Add date columns idempotently for older deployments
         cur.execute("ALTER TABLE lib_item ADD COLUMN IF NOT EXISTS start_date DATE")
         cur.execute("ALTER TABLE lib_item ADD COLUMN IF NOT EXISTS due_date   DATE")
+        # Widen the type CHECK constraint for older deployments (adds 'website')
+        cur.execute("ALTER TABLE lib_item DROP CONSTRAINT IF EXISTS lib_item_type_check")
+        cur.execute("""
+            ALTER TABLE lib_item ADD CONSTRAINT lib_item_type_check
+            CHECK (type IN ('paper', 'book', 'competition', 'website'))
+        """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS lib_item_type_idx ON lib_item(type);
         """)

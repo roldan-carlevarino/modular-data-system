@@ -36,7 +36,7 @@ from routers.media import _get_b2
 router = APIRouter(prefix="/library", tags=["Library"])
 
 
-VALID_TYPES = {"paper", "book", "competition"}
+VALID_TYPES = {"paper", "book", "competition", "website"}
 VALID_STATUSES = {
     "wishlist", "reading", "active", "upcoming",
     "submitted", "done", "archived", "abandoned",

@@ -309,6 +309,7 @@
 .library__card-type--paper       { background: rgba(80, 130, 220, 0.18); color: #6088c8; }
 .library__card-type--book        { background: rgba(192, 137, 56, 0.20); color: #c08938; }
 .library__card-type--competition { background: rgba(47, 138, 78, 0.20); color: #2f8a4e; }
+.library__card-type--website     { background: rgba(150, 90, 200, 0.20); color: #9a5ac8; }
 
 .library__card-status {
     font-size: 0.66rem;

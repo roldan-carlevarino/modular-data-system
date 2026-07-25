@@ -10,6 +10,7 @@
         paper: ['wishlist', 'reading', 'done', 'archived'],
         book: ['wishlist', 'reading', 'done', 'archived'],
         competition: ['wishlist', 'upcoming', 'active', 'submitted', 'done', 'abandoned'],
+        website: ['active', 'reading', 'done', 'archived'],
     };
 
     // ---- State ----
@@ -755,7 +756,7 @@
 
     // ---- Utils ----
     function typeLabel(t) {
-        return { paper: 'Paper', book: 'Book', competition: 'Competition' }[t] || t;
+        return { paper: 'Paper', book: 'Book', competition: 'Competition', website: 'Website' }[t] || t;
     }
     function dueBadge(it) {
         if (!it.due_date) return '';

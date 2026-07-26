@@ -37,10 +37,6 @@ router = APIRouter(prefix="/library", tags=["Library"])
 
 
 VALID_TYPES = {"paper", "book", "competition", "website"}
-VALID_STATUSES = {
-    "wishlist", "reading", "active", "upcoming",
-    "submitted", "done", "archived", "abandoned",
-}
 
 
 # ---------- Helpers ----------

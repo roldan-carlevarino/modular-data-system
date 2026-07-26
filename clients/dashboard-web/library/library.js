@@ -480,7 +480,7 @@
                 const fd = new FormData();
                 fd.append('file', f);
                 try {
-                    await fetch(`${API}/library/items/${item.id}/file`, { method: 'POST', body: fd });
+                    await api(`/library/items/${item.id}/file`, { method: 'POST', body: fd });
                     await Promise.all([loadItems(), loadStats()]);
                     renderDetail(item.id);
                 } catch (err) { alert(err.message); }
@@ -600,11 +600,23 @@
             el.innerHTML = '<em class="library__hint">No collections yet. Create one from the sidebar.</em>';
             return;
         }
-        el.innerHTML = state.collections.map(c => `
-            <label class="library__chk">
-                <input type="checkbox" value="${c.id}" ${sel.has(c.id) ? 'checked' : ''}>
-                <span>${escapeHtml(c.name)}</span>
-            </label>`).join('');
+        // Nested tree, mirroring the sidebar order.
+        const byParent = new Map();
+        state.collections.forEach(c => {
+            const p = c.parent_id ?? null;
+            if (!byParent.has(p)) byParent.set(p, []);
+            byParent.get(p).push(c);
+        });
+        const rowHtml = (c, depth) => {
+            let html = `
+                <label class="library__chk" style="padding-left:${depth * 1.1}rem">
+                    <input type="checkbox" value="${c.id}" ${sel.has(c.id) ? 'checked' : ''}>
+                    <span>${escapeHtml(c.name)}</span>
+                </label>`;
+            (byParent.get(c.id) || []).forEach(ch => { html += rowHtml(ch, depth + 1); });
+            return html;
+        };
+        el.innerHTML = (byParent.get(null) || []).map(c => rowHtml(c, 0)).join('');
     }
 
     function getSelectedCollectionIds() {
@@ -621,6 +633,12 @@
     function toggleDateFields(type) {
         const el = $('libFDates');
         if (el) el.style.display = (type === 'competition') ? 'flex' : 'none';
+        // Websites are bookmarks: Year / Authors don't apply, hide them.
+        const isWeb = (type === 'website');
+        const yearField = $('libFYearField');
+        const authorsField = $('libFAuthorsField');
+        if (yearField) yearField.style.display = isWeb ? 'none' : '';
+        if (authorsField) authorsField.style.display = isWeb ? 'none' : '';
     }
 
     function setActiveChip(group, value) {

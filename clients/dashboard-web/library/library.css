@@ -195,7 +195,22 @@
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+    flex: 1;
 }
+.library__col-caret {
+    flex-shrink: 0;
+    width: 1rem;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 0.7rem;
+    padding: 0;
+    line-height: 1;
+    text-align: center;
+}
+.library__col-caret:hover { color: var(--accent-primary); }
+.library__col-caret--empty { cursor: default; pointer-events: none; }
 .library__col-proj {
     font-size: 0.68rem;
     color: var(--accent-primary);

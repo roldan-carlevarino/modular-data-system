@@ -102,6 +102,7 @@ def list_items(
     q: Optional[str] = Query(None),
     tag: Optional[str] = Query(None),
     collection_id: Optional[int] = Query(None),
+    include_sub: bool = Query(False, description="Include items from subcollections"),
     project_id: Optional[int] = Query(None),
     due_before: Optional[str] = Query(None),
     due_after: Optional[str] = Query(None),
@@ -134,8 +135,22 @@ def list_items(
         where.append("EXISTS (SELECT 1 FROM lib_tag t WHERE t.item_id = i.id AND t.tag = %s)")
         params.append(tag)
     if collection_id is not None:
-        where.append("EXISTS (SELECT 1 FROM lib_item_collection ic WHERE ic.item_id = i.id AND ic.collection_id = %s)")
-        params.append(collection_id)
+        if include_sub:
+            where.append("""EXISTS (
+                SELECT 1 FROM lib_item_collection ic
+                WHERE ic.item_id = i.id AND ic.collection_id IN (
+                    WITH RECURSIVE sub AS (
+                        SELECT id FROM lib_collection WHERE id = %s
+                        UNION ALL
+                        SELECT c.id FROM lib_collection c JOIN sub ON c.parent_id = sub.id
+                    )
+                    SELECT id FROM sub
+                )
+            )""")
+            params.append(collection_id)
+        else:
+            where.append("EXISTS (SELECT 1 FROM lib_item_collection ic WHERE ic.item_id = i.id AND ic.collection_id = %s)")
+            params.append(collection_id)
     if project_id is not None:
         where.append("""EXISTS (
             SELECT 1 FROM lib_item_collection ic

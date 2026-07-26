@@ -25,6 +25,7 @@
         editingCollection: null, // null = new, otherwise collection object
         importDraft: null,
         importPdf: null,      // File object when importing from a PDF
+        collapsedCollections: new Set(), // collection ids that are collapsed in the tree
     };
 
     // ---- API helpers ----
@@ -132,7 +133,10 @@
         if (state.filters.status) params.set('status', state.filters.status);
         if (state.filters.q) params.set('q', state.filters.q);
         if (state.filters.tag) params.set('tag', state.filters.tag);
-        if (state.filters.collection_id) params.set('collection_id', state.filters.collection_id);
+        if (state.filters.collection_id) {
+            params.set('collection_id', state.filters.collection_id);
+            params.set('include_sub', 'true');
+        }
         try {
             state.items = await api(`/library/items?${params}`);
         } catch (e) {
@@ -215,19 +219,55 @@
 
     function renderCollections() {
         const ul = $('libCollectionList');
-        const all = `<li class="library__col-item ${state.filters.collection_id === null ? 'is-active' : ''}" data-id=""><span>All items</span><em>${state.items.length}</em></li>`;
-        ul.innerHTML = all + state.collections.map(c => `
-            <li class="library__col-item ${state.filters.collection_id === c.id ? 'is-active' : ''}" data-id="${c.id}">
-                <span class="library__col-name">${escapeHtml(c.name)}${c.project_name ? `<span class="library__col-proj" title="Linked to project">· ${escapeHtml(c.project_name)}</span>` : ''}</span>
-                <span class="library__col-right">
-                    <em>${c.item_count}</em>
-                    <button type="button" class="library__col-edit" data-edit-id="${c.id}" title="Edit collection">⚙</button>
-                </span>
-            </li>
-        `).join('');
+
+        // Build parent -> children index (Zotero-style nested tree)
+        const byParent = new Map();
+        state.collections.forEach(c => {
+            const p = c.parent_id ?? null;
+            if (!byParent.has(p)) byParent.set(p, []);
+            byParent.get(p).push(c);
+        });
+
+        const rowHtml = (c, depth) => {
+            const children = byParent.get(c.id) || [];
+            const hasChildren = children.length > 0;
+            const collapsed = state.collapsedCollections.has(c.id);
+            const caret = hasChildren
+                ? `<button type="button" class="library__col-caret" data-toggle-id="${c.id}">${collapsed ? '▸' : '▾'}</button>`
+                : '<span class="library__col-caret library__col-caret--empty"></span>';
+            let html = `
+                <li class="library__col-item ${state.filters.collection_id === c.id ? 'is-active' : ''}"
+                    data-id="${c.id}" style="padding-left:${0.4 + depth * 0.9}rem">
+                    ${caret}
+                    <span class="library__col-name">${escapeHtml(c.name)}${c.project_name ? `<span class="library__col-proj" title="Linked to project">· ${escapeHtml(c.project_name)}</span>` : ''}</span>
+                    <span class="library__col-right">
+                        <em>${c.item_count}</em>
+                        <button type="button" class="library__col-edit" data-edit-id="${c.id}" title="Edit collection">⚙</button>
+                    </span>
+                </li>`;
+            if (hasChildren && !collapsed) {
+                html += children.map(ch => rowHtml(ch, depth + 1)).join('');
+            }
+            return html;
+        };
+
+        const roots = byParent.get(null) || [];
+        const all = `<li class="library__col-item ${state.filters.collection_id === null ? 'is-active' : ''}" data-id=""><span class="library__col-caret library__col-caret--empty"></span><span>All items</span><em>${state.items.length}</em></li>`;
+        ul.innerHTML = all + roots.map(c => rowHtml(c, 0)).join('');
+
+        ul.querySelectorAll('.library__col-caret[data-toggle-id]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = parseInt(btn.dataset.toggleId, 10);
+                if (state.collapsedCollections.has(id)) state.collapsedCollections.delete(id);
+                else state.collapsedCollections.add(id);
+                renderCollections();
+            });
+        });
         ul.querySelectorAll('.library__col-item').forEach(li => {
             li.addEventListener('click', (e) => {
                 if (e.target.closest('.library__col-edit')) return; // handled below
+                if (e.target.closest('.library__col-caret')) return; // toggle handled above
                 const v = li.dataset.id;
                 state.filters.collection_id = v ? parseInt(v, 10) : null;
                 renderCollections();
@@ -709,10 +749,36 @@
     }
 
     // ---- Collections ----
+    function collectionDescendants(id) {
+        // Returns a Set with id and all its descendant collection ids.
+        const out = new Set([id]);
+        let added = true;
+        while (added) {
+            added = false;
+            state.collections.forEach(c => {
+                if (c.parent_id != null && out.has(c.parent_id) && !out.has(c.id)) {
+                    out.add(c.id);
+                    added = true;
+                }
+            });
+        }
+        return out;
+    }
+
     function openCollectionModal(col) {
         state.editingCollection = col || null;
         $('libColModalTitle').textContent = col ? 'Edit collection' : 'New collection';
         $('libColName').value = col ? (col.name || '') : '';
+
+        // Parent selector — exclude self and descendants to avoid cycles.
+        const forbidden = col ? collectionDescendants(col.id) : new Set();
+        const parentSel = $('libColParent');
+        parentSel.innerHTML = '<option value="">— Top level —</option>' +
+            state.collections
+                .filter(c => !forbidden.has(c.id))
+                .map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        parentSel.value = (col && col.parent_id != null) ? String(col.parent_id) : '';
+
         const sel = $('libColProject');
         sel.innerHTML = '<option value="">— Not linked to a project —</option>' +
             state.projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
@@ -728,12 +794,14 @@
         if (!name) { alert('Name is required'); return; }
         const projVal = $('libColProject').value;
         const project_id = projVal ? parseInt(projVal, 10) : null;
+        const parentVal = $('libColParent').value;
+        const parent_id = parentVal ? parseInt(parentVal, 10) : null;
         try {
             if (state.editingCollection) {
                 await apiJson(`/library/collections/${state.editingCollection.id}`, 'PATCH',
-                    { name, project_id });
+                    { name, project_id, parent_id });
             } else {
-                await apiJson('/library/collections', 'POST', { name, project_id });
+                await apiJson('/library/collections', 'POST', { name, project_id, parent_id });
             }
             closeCollectionModal();
             await loadCollections();

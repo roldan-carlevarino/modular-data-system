@@ -1389,6 +1389,7 @@
               <div class="library__panel">
                 <div class="library__panel-head">
                   <h4>Collections</h4>
+                  <button id="libToggleArchivedBtn" class="library__icon-btn" title="Show archived collections" aria-pressed="false">🗄</button>
                   <button id="libNewCollectionBtn" class="library__icon-btn" title="New collection">+</button>
                 </div>
                 <ul id="libCollectionList" class="library__col-list"></ul>
@@ -1539,6 +1540,7 @@
             </div>
             <footer class="library__modal-foot">
               <button id="libColModalDelete" class="library__btn library__btn--ghost" style="margin-right:auto;display:none;color:#b54545">Delete</button>
+              <button id="libColModalArchive" class="library__btn library__btn--ghost" style="display:none">Archive</button>
               <button id="libColModalCancel" class="library__btn library__btn--ghost">Cancel</button>
               <button id="libColModalSave" class="library__btn library__btn--primary">Save</button>
             </footer>

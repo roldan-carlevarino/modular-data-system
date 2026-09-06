@@ -599,19 +599,45 @@ if (scheduleCreateEventBtn) {
     const title = (prompt('Event title') || '').trim();
     if (!title) return;
 
-    const timeInput = prompt('Start time (HH:MM)', '09:00');
-    if (!timeInput) return;
-    const hm = parseHourMinute(timeInput);
-    if (!hm) {
-      alert('Invalid time. Use HH:MM');
-      return;
-    }
-
     const durationInput = prompt('Duration in minutes', '60');
     if (!durationInput) return;
     const duration = Number(durationInput);
     if (!Number.isFinite(duration) || duration <= 0) {
       alert('Duration must be a positive number');
+      return;
+    }
+
+    // Suggest a free slot that respects task pressure per franja.
+    let suggestedStart = '09:00';
+    try {
+      const day = getSelectedDayIso();
+      const availRes = await fetch(
+        `${CALENDAR_API_BASE}/calendar/availability?day=${encodeURIComponent(day)}&duration=${duration}`
+      );
+      if (availRes.ok) {
+        const avail = await availRes.json();
+        if (avail.suggested_slot) {
+          suggestedStart = avail.suggested_slot.start;
+        }
+        const lines = (avail.free_slots || []).map(s => {
+          const flag = s.franja_saturated ? ' ⚠ franja saturada de tareas' : '';
+          return `• ${s.start}–${s.end} (${s.length_minutes} min)${flag}`;
+        });
+        if (lines.length) {
+          alert('Huecos libres para ' + duration + ' min:\n\n' + lines.join('\n'));
+        } else {
+          alert('No hay ningún hueco libre de ' + duration + ' min ese día.');
+        }
+      }
+    } catch (err) {
+      console.error('Error loading availability:', err);
+    }
+
+    const timeInput = prompt('Start time (HH:MM)', suggestedStart);
+    if (!timeInput) return;
+    const hm = parseHourMinute(timeInput);
+    if (!hm) {
+      alert('Invalid time. Use HH:MM');
       return;
     }
 

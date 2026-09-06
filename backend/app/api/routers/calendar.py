@@ -10,9 +10,36 @@ from routers.tz import local_today, local_now
 
 router = APIRouter(prefix="/calendar", tags=["Calendar"])
 
+# --- Availability / free-slot detection -------------------------------------
+# Working day window (mirrors _ensure_day_slots defaults).
+DAY_START_HOUR = int(os.getenv("CALENDAR_DAY_START_HOUR", "5"))
+DAY_END_HOUR = int(os.getenv("CALENDAR_DAY_END_HOUR", "21"))
+# Franja cut-offs (start hour of each period). Tasks have no clock time, only a
+# franja, so we map each franja to a time range to reason about time pressure.
+FRANJA_BOUNDS = [
+    ("morning", DAY_START_HOUR, int(os.getenv("CALENDAR_AFTERNOON_HOUR", "12"))),
+    ("afternoon", int(os.getenv("CALENDAR_AFTERNOON_HOUR", "12")), int(os.getenv("CALENDAR_EVENING_HOUR", "17"))),
+    ("evening", int(os.getenv("CALENDAR_EVENING_HOUR", "17")), DAY_END_HOUR),
+]
+# Soft time cost of a single pending task, in minutes. Tasks stay fuzzy (no
+# fixed hour); this is only used to estimate how much of a franja they reserve.
+TASK_COST_MIN = int(os.getenv("CALENDAR_TASK_COST_MIN", "20"))
+# Events without an explicit duration default to this many minutes (matches the
+# COALESCE(..., 60) convention used elsewhere in this router).
+DEFAULT_EVENT_MINUTES = 60
+
 
 def _connect():
     return psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+
+
+def _overlap_minutes(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> int:
+    """Minutes of overlap between [a_start, a_end) and [b_start, b_end)."""
+    start = max(a_start, b_start)
+    end = min(a_end, b_end)
+    if end <= start:
+        return 0
+    return int((end - start).total_seconds() // 60)
 
 
 def _parse_day(day: Optional[str]) -> date:
@@ -495,6 +522,195 @@ def get_upcoming_events(days: int = Query(default=7), limit: int = Query(default
         raise
     except Exception as e:
         raise HTTPException(500, f"Failed to load upcoming events: {str(e)}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@router.get("/availability")
+def get_availability(
+    day: Optional[str] = Query(default=None),
+    duration: int = Query(default=DEFAULT_EVENT_MINUTES),
+):
+    """Find free clock slots for a new event while accounting for the soft time
+    pressure of (timeless) tasks in each franja.
+
+    Events live on the clock (start_time + duration); tasks only have a franja
+    (morning/afternoon/evening). A calendar gap can look free yet sit in a
+    franja already overloaded with pending tasks. This endpoint returns, per
+    franja, an estimated task load and a *soft* reserve (capped at the franja's
+    free capacity), and tags each free clock slot with whether its franja is
+    saturated — so suggestions respect task pressure without pinning tasks to a
+    fixed hour.
+    """
+    if duration < 1:
+        raise HTTPException(400, "duration must be >= 1 minute")
+
+    target_day = _parse_day(day)
+    conn = None
+    cur = None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        # Make sure slots + recurring template events exist for the day so they
+        # are counted as busy (mirrors how /calendar/day materialises the day).
+        _ensure_day_slots(cur, target_day)
+        _apply_template_if_empty(cur, target_day)
+        conn.commit()
+
+        work_start = datetime.combine(target_day, time(hour=DAY_START_HOUR))
+        work_end = datetime.combine(target_day, time(hour=DAY_END_HOUR))
+
+        # All events intersecting the working window, as absolute intervals.
+        cur.execute(
+            """
+            SELECT
+                COALESCE(
+                    ci.start_time,
+                    cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                ) AS event_start,
+                COALESCE(
+                    ci.end_time,
+                    COALESCE(
+                        ci.start_time,
+                        cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                    ) + make_interval(mins => COALESCE(ci.duration_minutes, %s))
+                ) AS event_end
+            FROM calendar_item ci
+            LEFT JOIN calendar_slot cs ON cs.id = ci.calendar_slot_id
+            WHERE COALESCE(
+                    ci.end_time,
+                    COALESCE(
+                        ci.start_time,
+                        cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                    ) + make_interval(mins => COALESCE(ci.duration_minutes, %s))
+                  ) > %s
+              AND COALESCE(
+                    ci.start_time,
+                    cs.start_time + make_interval(mins => COALESCE(ci.start_minute, 0))
+                  ) < %s
+            ORDER BY event_start ASC
+            """,
+            (DEFAULT_EVENT_MINUTES, DEFAULT_EVENT_MINUTES, work_start, work_end),
+        )
+        raw_events = [(r[0], r[1]) for r in cur.fetchall() if r[0] and r[1]]
+
+        # Merge event intervals (clipped to the working window) so overlapping
+        # or back-to-back events collapse into single busy blocks.
+        busy = []
+        for ev_start, ev_end in raw_events:
+            s = max(ev_start, work_start)
+            e = min(ev_end, work_end)
+            if e <= s:
+                continue
+            if busy and s <= busy[-1][1]:
+                busy[-1] = (busy[-1][0], max(busy[-1][1], e))
+            else:
+                busy.append((s, e))
+
+        # Pending (incomplete) tasks per franja for the day.
+        cur.execute(
+            """
+            SELECT occurrence, COUNT(*)
+            FROM task_occurrences
+            WHERE date = %s AND completed = FALSE
+            GROUP BY occurrence
+            """,
+            (target_day,),
+        )
+        pending_by_franja = {row[0]: int(row[1]) for row in cur.fetchall()}
+
+        # Per-franja load: event minutes + soft task reserve (capped at free
+        # capacity so the estimate never exceeds what the franja can hold).
+        franjas = []
+        franja_saturation = {}
+        for name, start_h, end_h in FRANJA_BOUNDS:
+            f_start = datetime.combine(target_day, time(hour=start_h))
+            f_end = datetime.combine(target_day, time(hour=end_h))
+            window_minutes = int((f_end - f_start).total_seconds() // 60)
+
+            event_minutes = sum(
+                _overlap_minutes(bs, be, f_start, f_end) for bs, be in busy
+            )
+            capacity = max(window_minutes - event_minutes, 0)
+
+            task_count = pending_by_franja.get(name, 0)
+            raw_task_load = task_count * TASK_COST_MIN
+            reserve = min(raw_task_load, capacity)
+            margin = capacity - reserve
+            saturated = raw_task_load > capacity
+
+            franja_saturation[name] = saturated
+            franjas.append({
+                "franja": name,
+                "start": f_start.strftime("%H:%M"),
+                "end": f_end.strftime("%H:%M"),
+                "window_minutes": window_minutes,
+                "event_minutes": event_minutes,
+                "capacity_minutes": capacity,
+                "pending_tasks": task_count,
+                "task_load_minutes": raw_task_load,
+                "reserved_minutes": reserve,
+                "free_margin_minutes": margin,
+                "saturated": saturated,
+            })
+
+        # Free clock gaps between busy blocks that fit the requested duration.
+        def _franjas_for(gap_s: datetime, gap_e: datetime):
+            names = []
+            for name, start_h, end_h in FRANJA_BOUNDS:
+                f_start = datetime.combine(target_day, time(hour=start_h))
+                f_end = datetime.combine(target_day, time(hour=end_h))
+                if _overlap_minutes(gap_s, gap_e, f_start, f_end) > 0:
+                    names.append(name)
+            return names
+
+        free_slots = []
+        cursor_dt = work_start
+        gaps = []
+        for bs, be in busy:
+            if bs > cursor_dt:
+                gaps.append((cursor_dt, bs))
+            cursor_dt = max(cursor_dt, be)
+        if cursor_dt < work_end:
+            gaps.append((cursor_dt, work_end))
+
+        for gap_s, gap_e in gaps:
+            length = int((gap_e - gap_s).total_seconds() // 60)
+            if length < duration:
+                continue
+            names = _franjas_for(gap_s, gap_e)
+            saturated = any(franja_saturation.get(n) for n in names)
+            free_slots.append({
+                "start": gap_s.strftime("%H:%M"),
+                "end": gap_e.strftime("%H:%M"),
+                "length_minutes": length,
+                "franjas": names,
+                "franja_saturated": saturated,
+            })
+
+        # Suggestion: earliest slot that fits in a non-saturated franja; if none,
+        # earliest slot that fits at all (caller can override — soft pressure).
+        suggested = next((s for s in free_slots if not s["franja_saturated"]), None)
+        if suggested is None and free_slots:
+            suggested = free_slots[0]
+
+        return {
+            "day": target_day.isoformat(),
+            "duration_minutes": duration,
+            "cost_per_task_minutes": TASK_COST_MIN,
+            "franjas": franjas,
+            "free_slots": free_slots,
+            "suggested_slot": suggested,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to compute availability: {str(e)}")
     finally:
         if cur:
             cur.close()

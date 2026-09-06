@@ -45,6 +45,21 @@ def _conn():
     return psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
 
 
+_COL_SCHEMA_READY = False
+
+
+def _ensure_collection_schema(cur):
+    """Add the collection 'archived' flag once per process (idempotent DDL)."""
+    global _COL_SCHEMA_READY
+    if _COL_SCHEMA_READY:
+        return
+    cur.execute(
+        "ALTER TABLE lib_collection "
+        "ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE"
+    )
+    _COL_SCHEMA_READY = True
+
+
 def _row_to_item(row, tags=None, collections=None, links=None, notes_count=0, highlights_count=0):
     return {
         "id": row["id"],
@@ -497,15 +512,19 @@ def delete_link(link_id: int):
 # ---------- Collections ----------
 
 @router.get("/collections")
-def list_collections():
+def list_collections(include_archived: bool = Query(False)):
     conn = _conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        cur.execute("""
-            SELECT c.id, c.name, c.parent_id, c.color, c.project_id,
+        _ensure_collection_schema(cur)
+        conn.commit()
+        where = "" if include_archived else "WHERE c.archived = FALSE"
+        cur.execute(f"""
+            SELECT c.id, c.name, c.parent_id, c.color, c.project_id, c.archived,
                 (SELECT name FROM projects p WHERE p.id = c.project_id) AS project_name,
                 (SELECT COUNT(*) FROM lib_item_collection ic WHERE ic.collection_id = c.id) AS item_count
             FROM lib_collection c
+            {where}
             ORDER BY c.name
         """)
         return [dict(r) for r in cur.fetchall()]
@@ -553,7 +572,7 @@ def create_collection(payload: dict):
 @router.patch("/collections/{cid}")
 def update_collection(cid: int, payload: dict):
     fields, params = [], []
-    for key in ("name", "parent_id", "color", "project_id"):
+    for key in ("name", "parent_id", "color", "project_id", "archived"):
         if key in payload:
             fields.append(f"{key} = %s")
             params.append(payload[key])
@@ -563,6 +582,7 @@ def update_collection(cid: int, payload: dict):
     conn = _conn()
     cur = conn.cursor()
     try:
+        _ensure_collection_schema(cur)
         cur.execute(f"UPDATE lib_collection SET {', '.join(fields)} WHERE id = %s", params)
         if cur.rowcount == 0:
             raise HTTPException(404, "Collection not found")

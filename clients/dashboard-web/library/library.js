@@ -26,6 +26,7 @@
         importDraft: null,
         importPdf: null,      // File object when importing from a PDF
         collapsedCollections: new Set(), // collection ids that are collapsed in the tree
+        showArchived: false,  // whether archived collections are shown in the tree
     };
 
     // ---- API helpers ----
@@ -53,12 +54,14 @@
         $('libNewBtn').addEventListener('click', () => openItemModal(null));
         $('libImportBtn').addEventListener('click', openImportModal);
         $('libNewCollectionBtn').addEventListener('click', () => openCollectionModal(null));
+        $('libToggleArchivedBtn').addEventListener('click', toggleShowArchived);
 
         // Collection modal
         $('libColModalClose').addEventListener('click', closeCollectionModal);
         $('libColModalCancel').addEventListener('click', closeCollectionModal);
         $('libColModalSave').addEventListener('click', saveCollectionModal);
         $('libColModalDelete').addEventListener('click', deleteCollectionFromModal);
+        $('libColModalArchive').addEventListener('click', toggleArchiveFromModal);
 
         // Search (debounced)
         let searchTimer = null;
@@ -147,9 +150,22 @@
     }
 
     async function loadCollections() {
-        try { state.collections = await api('/library/collections'); }
+        try {
+            state.collections = await api(`/library/collections${state.showArchived ? '?include_archived=true' : ''}`);
+        }
         catch (e) { state.collections = []; }
         renderCollections();
+    }
+
+    function toggleShowArchived() {
+        state.showArchived = !state.showArchived;
+        const btn = $('libToggleArchivedBtn');
+        if (btn) {
+            btn.setAttribute('aria-pressed', state.showArchived ? 'true' : 'false');
+            btn.classList.toggle('is-active', state.showArchived);
+            btn.title = state.showArchived ? 'Hide archived collections' : 'Show archived collections';
+        }
+        loadCollections();
     }
 
     async function loadProjects() {
@@ -236,10 +252,10 @@
                 ? `<button type="button" class="library__col-caret" data-toggle-id="${c.id}">${collapsed ? '▸' : '▾'}</button>`
                 : '<span class="library__col-caret library__col-caret--empty"></span>';
             let html = `
-                <li class="library__col-item ${state.filters.collection_id === c.id ? 'is-active' : ''}"
+                <li class="library__col-item ${state.filters.collection_id === c.id ? 'is-active' : ''}${c.archived ? ' is-archived' : ''}"
                     data-id="${c.id}" style="padding-left:${0.4 + depth * 0.9}rem">
                     ${caret}
-                    <span class="library__col-name">${escapeHtml(c.name)}${c.project_name ? `<span class="library__col-proj" title="Linked to project">· ${escapeHtml(c.project_name)}</span>` : ''}</span>
+                    <span class="library__col-name">${escapeHtml(c.name)}${c.archived ? ' <span class="library__col-arch" title="Archived">🗄</span>' : ''}${c.project_name ? `<span class="library__col-proj" title="Linked to project">· ${escapeHtml(c.project_name)}</span>` : ''}</span>
                     <span class="library__col-right">
                         <em>${c.item_count}</em>
                         <button type="button" class="library__col-edit" data-edit-id="${c.id}" title="Edit collection">⚙</button>
@@ -802,6 +818,9 @@
             state.projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
         sel.value = (col && col.project_id != null) ? String(col.project_id) : '';
         $('libColModalDelete').style.display = col ? 'inline-block' : 'none';
+        const archiveBtn = $('libColModalArchive');
+        archiveBtn.style.display = col ? 'inline-block' : 'none';
+        archiveBtn.textContent = (col && col.archived) ? 'Unarchive' : 'Archive';
         $('libColModal').style.display = 'flex';
         setTimeout(() => $('libColName').focus(), 0);
     }
@@ -837,6 +856,21 @@
             }
             await loadCollections();
             await loadItems();
+        } catch (e) { alert(e.message); }
+    }
+
+    async function toggleArchiveFromModal() {
+        if (!state.editingCollection) return;
+        const willArchive = !state.editingCollection.archived;
+        try {
+            await apiJson(`/library/collections/${state.editingCollection.id}`, 'PATCH', { archived: willArchive });
+            closeCollectionModal();
+            // If we archived the collection currently filtered on, clear the filter.
+            if (willArchive && state.filters.collection_id === state.editingCollection.id) {
+                state.filters.collection_id = null;
+                await loadItems();
+            }
+            await loadCollections();
         } catch (e) { alert(e.message); }
     }
 

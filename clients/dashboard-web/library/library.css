@@ -185,6 +185,13 @@
     color: var(--accent-primary);
     font-weight: 600;
 }
+.library__col-item.is-archived { opacity: 0.55; }
+.library__col-item.is-archived .library__col-name { font-style: italic; }
+.library__col-arch { font-size: 0.72rem; opacity: 0.8; }
+.library__icon-btn.is-active {
+    background: var(--bg-tertiary);
+    color: var(--accent-primary);
+}
 .library__col-item em {
     font-style: normal;
     font-size: 0.72rem;

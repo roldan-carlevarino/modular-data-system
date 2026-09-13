@@ -1393,15 +1393,13 @@ function contentToHtml(text) {
     /\$(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\2\})\$/g,
     (_, body) => `$$${body}$$`
   );
-  // Also promote bare \begin{env}...\end{env} (no $ wrapping) to display math.
-  text = text.replace(
-    /(^|[^$])(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\3\})(?!\$)/g,
-    (_, pre, body) => `${pre}$$${body}$$`
-  );
 
-  // Protect \[...\] (display) and \(...\) (inline) LaTeX delimiters, then
-  // $$...$$ (display) and $...$ (inline). All are restored later as $$/$ so
-  // KaTeX auto-render picks them up.
+  // Protect delimited math FIRST — \[...\] and \(...\), then $$...$$ and $...$ —
+  // pulling each into a placeholder. Only after that do we promote any remaining
+  // bare \begin{env}...\end{env}: this guarantees environments already inside a
+  // block (e.g. \begin{vmatrix} nested in \begin{aligned} or a $$...$$ block) are
+  // never re-wrapped, which used to split the block and let Markdown eat the `\\`.
+  // Everything is restored later as $$/$ so KaTeX auto-render picks it up.
   let protected_ = text
     .replace(/\\\[([\s\S]+?)\\\]/g, (_, inner) => {
       mathChunks.push({ display: true, inner });
@@ -1417,6 +1415,10 @@ function contentToHtml(text) {
     })
     .replace(/\$([^$\n]+?)\$/g, (_, inner) => {
       mathChunks.push({ display: false, inner });
+      return placeholder(mathChunks.length - 1);
+    })
+    .replace(/\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\1\}/g, (m) => {
+      mathChunks.push({ display: true, inner: m });
       return placeholder(mathChunks.length - 1);
     });
 

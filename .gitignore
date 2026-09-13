@@ -1,1 +1,4 @@
 .env
+
+# Local firmware secrets (WiFi credentials, API keys) — keep out of the repo
+secrets.h

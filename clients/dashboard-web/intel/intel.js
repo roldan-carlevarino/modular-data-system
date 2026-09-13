@@ -1399,8 +1399,18 @@ function contentToHtml(text) {
     (_, pre, body) => `${pre}$$${body}$$`
   );
 
-  // Protect $$...$$ (display) first, then $...$ (inline)
+  // Protect \[...\] (display) and \(...\) (inline) LaTeX delimiters, then
+  // $$...$$ (display) and $...$ (inline). All are restored later as $$/$ so
+  // KaTeX auto-render picks them up.
   let protected_ = text
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, inner) => {
+      mathChunks.push({ display: true, inner });
+      return placeholder(mathChunks.length - 1);
+    })
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, inner) => {
+      mathChunks.push({ display: false, inner });
+      return placeholder(mathChunks.length - 1);
+    })
     .replace(/\$\$([\s\S]+?)\$\$/g, (_, inner) => {
       mathChunks.push({ display: true, inner });
       return placeholder(mathChunks.length - 1);
@@ -1511,6 +1521,8 @@ async function renderKnowledge(blocks) {
   renderMathInElement(viewer, {
     delimiters: [
       {left: '$$', right: '$$', display: true},
+      {left: '\\[', right: '\\]', display: true},
+      {left: '\\(', right: '\\)', display: false},
       {left: '$', right: '$', display: false}
     ],
     throwOnError: false,
@@ -1735,6 +1747,8 @@ function addPostItToBlock(blockDiv, noteText, blockId, index) {
     renderMathInElement(textEl, {
       delimiters: [
         { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '\\(', right: '\\)', display: false },
         { left: '$', right: '$', display: false }
       ],
       throwOnError: false,
@@ -1845,6 +1859,8 @@ async function handleEditClick(event) {
             renderMathInElement(contentDiv, {
                 delimiters: [
                     {left: '$$', right: '$$', display: true},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false},
                     {left: '$', right: '$', display: false}
                 ],
                 throwOnError: false,

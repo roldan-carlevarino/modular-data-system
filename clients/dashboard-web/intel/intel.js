@@ -1395,17 +1395,19 @@ function contentToHtml(text) {
   );
 
   // Protect delimited math FIRST — \[...\] and \(...\), then $$...$$ and $...$ —
-  // pulling each into a placeholder. Only after that do we promote any remaining
-  // bare \begin{env}...\end{env}: this guarantees environments already inside a
-  // block (e.g. \begin{vmatrix} nested in \begin{aligned} or a $$...$$ block) are
-  // never re-wrapped, which used to split the block and let Markdown eat the `\\`.
-  // Everything is restored later as $$/$ so KaTeX auto-render picks it up.
+  // pulling each into a placeholder. The (?<!\\) lookbehind stops \\[4pt] (array
+  // row spacing) from being read as a display-math opener. Only after that do we
+  // promote any remaining bare \begin{env}...\end{env}: this guarantees
+  // environments already inside a block (e.g. \begin{vmatrix} nested in
+  // \begin{aligned} or a $$...$$ block) are never re-wrapped, which used to split
+  // the block and let Markdown eat the `\\`. Everything is restored later as
+  // $$/$ so KaTeX auto-render picks it up.
   let protected_ = text
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, inner) => {
+    .replace(/(?<!\\)\\\[([\s\S]+?)\\\]/g, (_, inner) => {
       mathChunks.push({ display: true, inner });
       return placeholder(mathChunks.length - 1);
     })
-    .replace(/\\\(([\s\S]+?)\\\)/g, (_, inner) => {
+    .replace(/(?<!\\)\\\(([\s\S]+?)\\\)/g, (_, inner) => {
       mathChunks.push({ display: false, inner });
       return placeholder(mathChunks.length - 1);
     })

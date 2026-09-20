@@ -169,6 +169,7 @@ def get_knowledge_projects():
         cur.execute("""
             SELECT id, name, parent_id
             FROM projects
+            WHERE status = 'active'
             ORDER BY name;
         """)
         rows = cur.fetchall()

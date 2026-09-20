@@ -539,7 +539,7 @@ def list_projects_for_library():
     conn = _conn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        cur.execute("SELECT id, name FROM projects ORDER BY name")
+        cur.execute("SELECT id, name FROM projects WHERE status = 'active' ORDER BY name")
         return [dict(r) for r in cur.fetchall()]
     finally:
         cur.close()

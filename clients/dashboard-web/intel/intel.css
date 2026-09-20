@@ -1027,8 +1027,10 @@
   top: -10px;
   right: 20px;
   z-index: 20;
+  /* Size to content (so equations fit) but cap the width so plain text still wraps */
+  width: max-content;
   min-width: 140px;
-  max-width: 230px;
+  max-width: 340px;
   background: #fff9c4;
   color: #1a1a1a;
   border-radius: 4px;
@@ -1077,6 +1079,18 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: #2c2c2c;
+}
+/* Keep equations intact: don't let word-break fragment KaTeX, and let wide
+   display equations scroll instead of overflowing the post-it. */
+.postit-text .katex {
+  word-break: normal;
+  white-space: nowrap;
+}
+.postit-text .katex-display {
+  margin: 0.35em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .postit-delete {
   position: absolute;

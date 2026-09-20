@@ -593,6 +593,7 @@ function renderProjects(container, clickable = false) {
             <span class="project-icon">${icon}</span>
             <span class="project-name">${project.name}</span>
             <button class="project-attachments-btn" type="button" title="Spreadsheets attached to this project" data-project-id="${project.id}" data-project-name="${(project.name || '').replace(/"/g, '&quot;')}">📑</button>
+            <button class="project-archive-btn" type="button" title="Archive this project" data-project-id="${project.id}">🗄️</button>
             ${project.description ? `<span class="project-desc">${project.description}</span>` : ''}
           `;
 
@@ -612,6 +613,14 @@ function renderProjects(container, clickable = false) {
             attachBtn.addEventListener('click', (e) => {
               e.stopPropagation();
               openProjectAttachmentsModal(project.id, project.name);
+            });
+          }
+
+          const archiveBtn = content.querySelector('.project-archive-btn');
+          if (archiveBtn) {
+            archiveBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              archiveProject(project.id, project.name);
             });
           }
 
@@ -664,6 +673,95 @@ if (projectsList) {
 if (pomodoroProjectsList) {
   renderProjects(pomodoroProjectsList, true);
 }
+
+// ---- ARCHIVE / RESTORE PROJECTS ----
+const archivedProjectsList = document.getElementById('archivedProjects');
+
+async function archiveProject(projectId, projectName) {
+  if (!confirm(`Archive "${projectName}"?\nIt will be moved to Archived Projects.`)) return;
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'archived' })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    if (String(activeProjectId) === String(projectId)) activeProjectId = null;
+    refreshAllProjectViews();
+  } catch (err) {
+    console.error(err);
+    alert('Error archiving project');
+  }
+}
+
+async function restoreProject(projectId, projectName) {
+  try {
+    const res = await fetch(`${PROJECTS_API_BASE}/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    refreshAllProjectViews();
+  } catch (err) {
+    console.error(err);
+    alert('Error restoring project');
+  }
+}
+
+function refreshAllProjectViews() {
+  if (projectsList) renderProjects(projectsList, false);
+  if (pomodoroProjectsList) renderProjects(pomodoroProjectsList, true);
+  renderArchivedProjects();
+}
+
+function renderArchivedProjects() {
+  if (!archivedProjectsList) return;
+
+  fetch(`${PROJECTS_URL}?status=archived`)
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      return res.json();
+    })
+    .then(projects => {
+      if (!Array.isArray(projects) || projects.length === 0) {
+        archivedProjectsList.innerHTML = '<li class="no-data">No archived projects</li>';
+        return;
+      }
+
+      archivedProjectsList.innerHTML = '';
+      projects
+        .sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')))
+        .forEach(project => {
+          const normalizedType = normalizeProjectType(project.type);
+          const icon = normalizedType === 'project' ? '📁' : '📄';
+
+          const li = document.createElement('li');
+          li.classList.add('project-item', 'archived');
+          li.dataset.projectId = project.id;
+
+          const content = document.createElement('div');
+          content.className = 'project-content';
+          content.innerHTML = `
+            <span class="project-icon">${icon}</span>
+            <span class="project-name">${project.name}</span>
+            <button class="project-restore-btn" type="button" title="Restore this project" data-project-id="${project.id}">↩️</button>
+          `;
+
+          content.querySelector('.project-restore-btn')
+            .addEventListener('click', () => restoreProject(project.id, project.name));
+
+          li.appendChild(content);
+          archivedProjectsList.appendChild(li);
+        });
+    })
+    .catch(err => {
+      console.error('Error cargando archived projects:', err);
+      archivedProjectsList.innerHTML = `<li class="error">Error loading archived projects: ${err.message}</li>`;
+    });
+}
+
+renderArchivedProjects();
 
 setupProjectSchemas();
 setupProjectSchemasModal();

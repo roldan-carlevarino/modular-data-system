@@ -8,7 +8,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 @router.get("/")
-def get_projects():
+def get_projects(status: str = "active"):
     conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
     cur = conn.cursor()
 
@@ -22,9 +22,9 @@ def get_projects():
             status,
             path
         FROM projects_path
-        WHERE status = 'active'
+        WHERE status = %s
         ORDER BY path;
-    """)
+    """, (status,))
     rows = cur.fetchall()
 
     cur.close()
@@ -75,6 +75,56 @@ def create_project(payload: dict):
     except Exception as e:
         if conn: conn.rollback()
         raise HTTPException(500, f"Failed to create project: {str(e)}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@router.patch("/{project_id}")
+def update_project(project_id: int, payload: dict):
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(os.getenv("TASKS_URL"), sslmode="require")
+        cur = conn.cursor()
+
+        sets, vals = [], []
+        if "status" in payload:
+            status = (payload.get("status") or "").strip().lower()
+            if status not in ("active", "archived"):
+                raise HTTPException(400, "status must be 'active' or 'archived'")
+            sets.append("status = %s")
+            vals.append(status)
+        if "name" in payload:
+            name = (payload.get("name") or "").strip()
+            if not name:
+                raise HTTPException(400, "Name cannot be empty")
+            sets.append("name = %s")
+            vals.append(name)
+        if "description" in payload:
+            sets.append("description = %s")
+            vals.append((payload.get("description") or "").strip() or None)
+        if "parent_id" in payload:
+            sets.append("parent_id = %s")
+            vals.append(payload.get("parent_id") or None)
+        if not sets:
+            raise HTTPException(400, "Nothing to update")
+
+        vals.append(project_id)
+        cur.execute(
+            f"UPDATE projects SET {', '.join(sets)} WHERE id = %s",
+            tuple(vals),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Project not found")
+        conn.commit()
+        return {"ok": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(500, f"Failed to update project: {str(e)}")
     finally:
         if cur: cur.close()
         if conn: conn.close()

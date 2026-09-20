@@ -137,8 +137,16 @@ function setupKnowledgeSidebar() {
 async function loadProjects() {
   if (!projectSelect) return;
 
-  const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/projects`);
-  const projects = await res.json();
+  let projects;
+  try {
+    const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/projects`);
+    if (!res.ok) throw new Error(await res.text());
+    projects = await res.json();
+  } catch (err) {
+    console.error("Error loading projects:", err);
+    projectSelect.innerHTML = `<option value="">Error loading projects</option>`;
+    return;
+  }
 
   projectSelect.innerHTML = `<option value="">None</option>`;
 
@@ -207,7 +215,14 @@ async function loadConcepts() {
     url += `?project_id=${knowledgeState.project_id}`;
   }
 
-  const res = await fetch(url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    renderConceptTree([]);
+    console.error("Error loading concepts:", err);
+    return;
+  }
   if (!res.ok) {
     const errorText = await res.text();
     renderConceptTree([]);
@@ -372,7 +387,6 @@ function renderConceptTree(concepts) {
 
         el.classList.add("active");
         knowledgeState.concept_id = c.id;
-        console.log("🔵 Concepto seleccionado:", c.id, c.name);
         pinRootAncestorToTop(c.id);
         fetchKnowledge();
       });
@@ -511,9 +525,7 @@ function filterConceptTree(term) {
 function setupModeSelector() {
   if (!modeSelect) return;
   modeSelect.addEventListener("change", () => {
-    console.log("Mode changed to:", modeSelect.value);
     knowledgeState.mode = modeSelect.value || null;
-    console.log("Updated knowledgeState:", knowledgeState);
     fetchKnowledge();
   });
 
@@ -564,10 +576,7 @@ function setupBlockTypeFilters() {
 // FETCH KNOWLEDGE
 // ===============================
 async function fetchKnowledge() {
-  if (!knowledgeState.concept_id || !viewer) {
-    console.log("❌ No hay concept_id, saliendo");  // ← Añade esto
-    return;
-  }
+  if (!knowledgeState.concept_id || !viewer) return;
 
   const params = new URLSearchParams();
   params.append("concept_id", knowledgeState.concept_id);
@@ -580,12 +589,15 @@ async function fetchKnowledge() {
     params.append("mode", knowledgeState.mode);
   }
 
-  console.log("🔵 URL:", `${KNOWLEDGE_API_BASE}/knowledge/query?${params.toString()}`);  // ← Añade esto
-
-  const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/query?${params.toString()}`);
-  const blocks = await res.json();
-  console.log("🔵 Blocks recibidos:", blocks.length); 
-  await renderKnowledge(blocks);
+  try {
+    const res = await fetch(`${KNOWLEDGE_API_BASE}/knowledge/query?${params.toString()}`);
+    if (!res.ok) throw new Error(await res.text());
+    const blocks = await res.json();
+    await renderKnowledge(blocks);
+  } catch (err) {
+    console.error("Error loading knowledge blocks:", err);
+    viewer.innerHTML = '<div class="knowledge-empty">Error loading content. Check your connection and try again.</div>';
+  }
 }
 
 // ===============================
@@ -1292,8 +1304,11 @@ function initSpreadsheetContextMenu(container) {
         _spreadsheetCtxTarget = td;
         const rect = container.getBoundingClientRect();
         menu.style.display = 'block';
-        menu.style.left = (e.clientX - rect.left) + 'px';
-        menu.style.top = (e.clientY - rect.top) + 'px';
+        // Clamp within the container so the menu never renders off-screen
+        const maxLeft = Math.max(0, rect.width - menu.offsetWidth);
+        const maxTop = Math.max(0, rect.height - menu.offsetHeight);
+        menu.style.left = Math.min(e.clientX - rect.left, maxLeft) + 'px';
+        menu.style.top = Math.min(e.clientY - rect.top, maxTop) + 'px';
     });
 
     // Hide on click outside

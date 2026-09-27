@@ -744,7 +744,7 @@ def process_discover(session):
             "queries": out.get("queries") or [],
         }
         rr = session.post(
-            f"{API_BASE}/careers/worker/discover/result", json=body, timeout=180,
+            f"{API_BASE}/careers/worker/discover/result", json=body, timeout=300,
         )
         rr.raise_for_status()
         summ = rr.json()

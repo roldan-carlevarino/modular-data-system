@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -680,6 +681,9 @@ _DISCOVER_KINDS = ["greenhouse", "lever", "ashby"]
 # A board only auto-activates if at least this many of its live titles look like
 # a relevant role (hard evidence the board actually posts what the user wants).
 _DISCOVER_MIN_MATCHES = 1
+# Wall-clock budget for one discovery validation pass (keeps the HTTP request
+# well under the worker's timeout even if many boards are probed).
+_DISCOVER_BUDGET_SEC = 90
 # Broad hints used ONLY to gauge a discovered board's relevance from job titles.
 _DISCOVER_TITLE_HINTS = [
     "intern", "research assistant", "research scientist", "quant",
@@ -1469,20 +1473,20 @@ def _probe_board(kind: str, slug: str):
     using titles only; (0, 0) if the board doesn't exist or errors out."""
     try:
         if kind == "greenhouse":
-            data = _http_get_json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs")
+            data = _http_get_json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs", timeout=8)
             jobs = data.get("jobs", [])
             titles = [j.get("title") or "" for j in jobs]
         elif kind == "lever":
-            data = _http_get_json(f"https://api.lever.co/v0/postings/{slug}?mode=json")
+            data = _http_get_json(f"https://api.lever.co/v0/postings/{slug}?mode=json", timeout=8)
             jobs = data if isinstance(data, list) else []
             titles = [j.get("text") or "" for j in jobs]
         elif kind == "ashby":
-            data = _http_get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
+            data = _http_get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}", timeout=8)
             jobs = data.get("jobs", [])
             titles = [j.get("title") or "" for j in jobs]
         else:
             return (0, 0)
-    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError, OSError):
         return (0, 0)
     if not jobs:
         return (0, 0)
@@ -1520,12 +1524,16 @@ def _merge_queries(cur, queries) -> list:
 
 def _discover_and_add(cur, companies, queries) -> dict:
     """Hard-validate the worker's proposals against live ATS boards and add only
-    the ones that exist AND publish relevant roles. Never trusts the LLM blindly."""
+    the ones that exist AND publish relevant roles. Never trusts the LLM blindly.
+    Bounded by a wall-clock budget so the request can't hang the worker."""
     cur.execute("SELECT kind, lower(slug) FROM career_source")
     existing = {(r[0], r[1]) for r in cur.fetchall()}
     added, rejected = [], []
     seen_names = set()
-    for raw in (companies or [])[:40]:
+    deadline = time.monotonic() + _DISCOVER_BUDGET_SEC
+    for raw in (companies or [])[:25]:
+        if time.monotonic() > deadline:
+            break
         name = str(raw or "").strip()
         if not name or name.lower() in seen_names:
             continue

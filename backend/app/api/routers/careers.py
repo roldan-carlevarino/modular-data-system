@@ -1865,6 +1865,31 @@ def delete_opportunity(oid: int):
         conn.close()
 
 
+@router.post("/opportunities/cleanup-location")
+def cleanup_off_location():
+    """Delete non-promoted openings whose location no longer matches the profile
+    locations (Amsterdam/Remote/Madrid/Barcelona by default)."""
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("SELECT locations FROM career_profile WHERE id = 1")
+        prow = cur.fetchone()
+        locations = (prow["locations"] if prow else None) or _TARGET_LOCATIONS
+        cur.execute(
+            "SELECT id, location, remote FROM career_opportunity WHERE promoted_application_id IS NULL"
+        )
+        to_del = [r["id"] for r in cur.fetchall()
+                  if not _location_ok({"location": r["location"], "remote": r["remote"]}, locations)]
+        if to_del:
+            cur.execute("DELETE FROM career_opportunity WHERE id = ANY(%s)", (to_del,))
+        conn.commit()
+        return {"removed": len(to_del), "locations": locations}
+    finally:
+        cur.close()
+        conn.close()
+
+
 # ---------- Scoring queue (claimed by the Mac knowledge-worker) ----------
 
 @router.post("/worker/score/claim")

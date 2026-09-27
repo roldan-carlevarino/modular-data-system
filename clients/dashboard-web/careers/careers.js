@@ -174,6 +174,7 @@
         $("oppFetch").addEventListener("click", fetchOpportunities);
         $("oppScore").addEventListener("click", scorePending);
         $("oppRefresh").addEventListener("click", () => loadOpportunities());
+        $("oppCleanLoc").addEventListener("click", cleanupOffLocation);
         $("careerOppList").addEventListener("click", onOppListClick);
 
         // Lazy-load on first activation
@@ -1261,6 +1262,22 @@
             loadOpportunities();
         } catch (e) {
             alert(`Score failed: ${e.message}`);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function cleanupOffLocation() {
+        if (!confirm("¿Borrar las ofertas guardadas que no estén en tus ubicaciones (o remoto)?")) return;
+        const btn = $("oppCleanLoc");
+        btn.disabled = true;
+        try {
+            const r = await api("/careers/opportunities/cleanup-location", "POST", {});
+            $("oppStats").textContent =
+                `${r.removed} fuera de zona eliminadas (${(r.locations || []).join(", ")})`;
+            loadOpportunities();
+        } catch (e) {
+            alert(`Cleanup failed: ${e.message}`);
         } finally {
             btn.disabled = false;
         }

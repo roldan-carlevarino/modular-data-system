@@ -815,7 +815,7 @@ def main():
             print(f"[voice] disabled: {e}")
             pause_event = None
 
-    last_careers = 0.0  # 0 => first loop iteration runs a careers cycle at once
+    last_careers = None  # None => force a careers cycle on the first iteration
     try:
         while True:
             # While a voice interaction is running, give it exclusive use of
@@ -825,7 +825,8 @@ def main():
                 continue
             # Autonomous careers pipeline: kick off a fetch/discovery cycle on a
             # timer (first pass runs immediately on startup).
-            if CAREERS_AUTO and (time.monotonic() - last_careers) >= CAREERS_INTERVAL_SEC:
+            if CAREERS_AUTO and (last_careers is None
+                                 or (time.monotonic() - last_careers) >= CAREERS_INTERVAL_SEC):
                 last_careers = time.monotonic()
                 try:
                     careers_orchestrate(holder["session"])

@@ -688,7 +688,8 @@ DISCOVER_SYSTEM_PROMPT = (
     "Devuelve SOLO JSON con esta forma exacta:\n"
     "{\n"
     '  "companies": [string],   // 15-30 nombres de empresas REALES y conocidas\n'
-    '  "queries":   [string]    // 5-10 frases de busqueda cortas en ingles\n'
+    '  "queries":   [string],   // 5-10 frases de busqueda cortas en ingles\n'
+    '  "sites":     [string]    // 0-8 URLs de paginas de empleo de orgs nicho\n'
     "}\n"
     "Reglas MUY IMPORTANTES:\n"
     "- Propon SOLO empresas que existan de verdad y que suelan contratar estos "
@@ -701,6 +702,9 @@ DISCOVER_SYSTEM_PROMPT = (
     "River Trading', 'Scale AI'), no dominios ni URLs.\n"
     "- NO repitas las empresas ni las queries que ya estan en la lista de conocidas.\n"
     "- queries: frases cortas tipo 'machine learning intern', 'quant research new grad'.\n"
+    "- sites: si conoces la URL de la pagina de empleo de un instituto/laboratorio/"
+    "firma nicho que NO use un ATS conocido (ej. 'https://forecastingresearch.org/careers'), "
+    "inclúyela; si no, deja la lista vacia. No inventes URLs.\n"
     "- Responde SOLO el objeto JSON, sin texto adicional."
 )
 
@@ -746,6 +750,7 @@ def process_discover(session):
             "job_id": job_id,
             "companies": out.get("companies") or [],
             "queries": out.get("queries") or [],
+            "sites": out.get("sites") or [],
         }
         rr = session.post(
             f"{API_BASE}/careers/worker/discover/result", json=body,

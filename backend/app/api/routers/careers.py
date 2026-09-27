@@ -713,6 +713,23 @@ _DISCOVER_TITLE_HINTS = [
     "quantitative", "data scien", "machine learning", " ml ", "phd",
 ]
 
+# --- ATS resolver (level 2): find a company's ATS/careers page from its name ---
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120 Safari/537.36")
+# Careers-page paths tried on each guessed domain.
+_CAREERS_PATHS = ["/careers", "/jobs", "/join-us", "/en/careers", "/company/careers"]
+# ATS embed signatures -> (kind, token capture). Token then validated live.
+_ATS_DETECTORS = [
+    ("greenhouse", re.compile(r"greenhouse\.io/(?:v1/boards/|embed/job_board\?for=)([a-z0-9]+)", re.I)),
+    ("greenhouse", re.compile(r"boards\.greenhouse\.io/([a-z0-9]+)", re.I)),
+    ("lever", re.compile(r"jobs\.lever\.co/([a-z0-9-]+)", re.I)),
+    ("ashby", re.compile(r"(?:jobs\.ashbyhq\.com|api\.ashbyhq\.com/posting-api/job-board)/([a-z0-9-]+)", re.I)),
+    ("smartrecruiters", re.compile(r"smartrecruiters\.com/(?:v1/companies/)?([A-Za-z0-9]+)", re.I)),
+]
+_ATS_TOKEN_STOPWORDS = {"embed", "for", "www", "job", "jobs", "careers", "api", "v1", "companies"}
+# Per-company time budget for the resolver (bounds the domain/path fetch fan-out).
+_RESOLVE_PER_COMPANY_SEC = 18
+
 # Seeded once (only when career_source is empty) so the market is covered broadly
 # out of the box. Every slug below was probed live and returns openings; quant
 # firms included because they publish DS/ML/quant roles on these ATS boards.
@@ -1778,6 +1795,85 @@ def _probe_board(kind: str, slug: str):
     return (len(jobs), matches)
 
 
+def _domain_candidates(name: str) -> list:
+    """Guessed web domains for a company name. Uses the FULL name only (compact +
+    dashed) — never suffix-stripped — so 'Maven Securities' -> mavensecurities.com,
+    NOT maven.com (a different company). Precision over recall here."""
+    words = [w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if w]
+    if not words:
+        return []
+    doms = []
+    for b in ("".join(words), "-".join(words)):
+        for tld in (".com", ".io", ".ai", ".org"):
+            d = b + tld
+            if d not in doms:
+                doms.append(d)
+    return doms[:6]
+
+
+def _resolve_company_source(name: str):
+    """Find a company's ATS/careers page by guessing its domain, then detect the
+    embedded ATS token (validated live) or a static job-link careers page.
+    Returns a source dict or None. Light HTTP only (no browser)."""
+    deadline = time.monotonic() + _RESOLVE_PER_COMPANY_SEC
+
+    def _try_ats(pages):
+        for url, html in pages:
+            for kind, rx in _ATS_DETECTORS:
+                m = rx.search(html)
+                if m and m.group(1).lower() not in _ATS_TOKEN_STOPWORDS:
+                    jc, mc = _probe_board(kind, m.group(1))
+                    if jc > 0 and mc >= _DISCOVER_MIN_MATCHES:
+                        return {"kind": kind, "slug": m.group(1), "label": name, "via": url}
+            # Greenhouse embeds sometimes expose the token via a bare for= param.
+            if "greenhouse" in html.lower():
+                m = re.search(r"[?&]for=([a-z0-9]{4,})", html, re.I)
+                if m and m.group(1).lower() not in _ATS_TOKEN_STOPWORDS:
+                    jc, mc = _probe_board("greenhouse", m.group(1))
+                    if jc > 0 and mc >= _DISCOVER_MIN_MATCHES:
+                        return {"kind": "greenhouse", "slug": m.group(1), "label": name, "via": url}
+        return None
+
+    def _try_site(pages):
+        for url, html in pages:
+            base = urllib.parse.urlparse(url)
+            base_path = base.path.rstrip("/")
+            if not base_path:
+                continue
+            links = set()
+            for href in re.findall(r'href="([^"#?]+)"', html):
+                a = urllib.parse.urljoin(url, href)
+                pu = urllib.parse.urlparse(a)
+                if (pu.netloc == base.netloc
+                        and pu.path.rstrip("/").startswith(base_path + "/")
+                        and pu.path.rstrip("/").count("/") == base_path.count("/") + 1):
+                    links.add(a)
+            if len(links) >= 4:
+                return {"kind": "site", "slug": url, "label": name, "via": url,
+                        "filters": {"link_pattern": f"^{re.escape(base_path)}/[a-z0-9-]+$"}}
+        return None
+
+    for dom in _domain_candidates(name):
+        if time.monotonic() > deadline:
+            break
+        for host in (f"https://www.{dom}", f"https://{dom}"):
+            pages = []
+            for path in _CAREERS_PATHS:
+                if time.monotonic() > deadline:
+                    break
+                try:
+                    pages.append((host + path, _http_get_text(host + path, timeout=6, ua=_BROWSER_UA)))
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+                    continue
+            if not pages:
+                continue
+            hit = _try_ats(pages) or _try_site(pages)
+            if hit:
+                return hit
+            break  # host reachable but nothing usable — don't try more domains
+    return None
+
+
 def _merge_queries(cur, queries) -> list:
     """Add validated search phrases to the Remotive source(s) so Option-B term
     search picks them up on the next fetch. Deduped, capped."""
@@ -1806,7 +1902,7 @@ def _merge_queries(cur, queries) -> list:
     return clean
 
 
-def _discover_and_add(cur, companies, queries) -> dict:
+def _discover_and_add(cur, companies, queries, sites=None) -> dict:
     """Hard-validate the worker's proposals against live ATS boards and add only
     the ones that exist AND publish relevant roles. Never trusts the LLM blindly.
     Bounded by a wall-clock budget so the request can't hang the worker."""
@@ -1815,6 +1911,22 @@ def _discover_and_add(cur, companies, queries) -> dict:
     added, rejected = [], []
     seen_names = set()
     deadline = time.monotonic() + _DISCOVER_BUDGET_SEC
+
+    def _insert_source(kind, slug, label, mc, jc, via=None, extra_filters=None):
+        conf = min(100, 45 + (mc or 0) * 6)
+        filt = {"keywords": _TARGET_KEYWORDS, **(extra_filters or {})}
+        cur.execute(
+            "INSERT INTO career_source (kind, slug, label, enabled, discovered, confidence, filters) "
+            "VALUES (%s, %s, %s, TRUE, TRUE, %s, %s::jsonb) RETURNING id",
+            (kind, slug, label, conf, json.dumps(filt)),
+        )
+        existing.add((kind, slug.lower()))
+        rec = {"company": label, "kind": kind, "slug": slug, "confidence": conf,
+               "matches": mc, "jobs": jc}
+        if via:
+            rec["via"] = via
+        added.append(rec)
+
     for raw in (companies or [])[:_DISCOVER_MAX_COMPANIES]:
         if time.monotonic() > deadline:
             break
@@ -1837,19 +1949,48 @@ def _discover_and_add(cur, companies, queries) -> dict:
                 break
         if found:
             kind, slug, jc, mc = found
-            conf = min(100, 45 + mc * 6)
-            cur.execute(
-                "INSERT INTO career_source (kind, slug, label, enabled, discovered, confidence, filters) "
-                "VALUES (%s, %s, %s, TRUE, TRUE, %s, %s::jsonb) RETURNING id",
-                (kind, slug, name, conf, json.dumps({"keywords": _TARGET_KEYWORDS})),
-            )
-            existing.add((kind, slug.lower()))
-            added.append({"company": name, "kind": kind, "slug": slug,
-                          "confidence": conf, "matches": mc, "jobs": jc})
+            _insert_source(kind, slug, name, mc, jc)
+            continue
+        # Fallback (level 2): resolve the company's ATS/careers page from its site.
+        resolved = None
+        if not duplicate and time.monotonic() < deadline:
+            resolved = _resolve_company_source(name)
+        if resolved and (resolved["kind"], resolved["slug"].lower()) not in existing:
+            _insert_source(resolved["kind"], resolved["slug"], name, None, None,
+                           via=resolved.get("via"), extra_filters=resolved.get("filters"))
         else:
             rejected.append({"company": name,
                              "reason": "already configured" if duplicate
                              else "no validated board with relevant roles"})
+
+    # Direct careers-page URLs the worker already knows (static/niche orgs).
+    for raw in (sites or [])[:20]:
+        if time.monotonic() > deadline:
+            break
+        url = str(raw or "").strip()
+        if not url.startswith("http"):
+            continue
+        if ("site", url.lower()) in existing:
+            continue
+        try:
+            html = _http_get_text(url, timeout=8, ua=_BROWSER_UA)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+            continue
+        base = urllib.parse.urlparse(url)
+        base_path = base.path.rstrip("/")
+        links = set()
+        for href in re.findall(r'href="([^"#?]+)"', html):
+            a = urllib.parse.urljoin(url, href)
+            pu = urllib.parse.urlparse(a)
+            if (pu.netloc == base.netloc and base_path
+                    and pu.path.rstrip("/").startswith(base_path + "/")
+                    and pu.path.rstrip("/").count("/") == base_path.count("/") + 1):
+                links.add(a)
+        if len(links) >= 4:
+            label = base.netloc.replace("www.", "")
+            _insert_source("site", url, label, None, None, via=url,
+                           extra_filters={"link_pattern": f"^{re.escape(base_path)}/[a-z0-9-]+$"})
+
     queries_added = _merge_queries(cur, queries)
     return {"added": added, "rejected": rejected, "queries_added": queries_added}
 
@@ -2446,10 +2587,13 @@ def worker_discover_result(payload: dict = Body(...)):
         raise HTTPException(400, "job_id is required")
     companies = payload.get("companies") or []
     queries = payload.get("queries") or []
+    sites = payload.get("sites") or []
     if isinstance(companies, str):
         companies = [c.strip() for c in companies.split(",")]
     if isinstance(queries, str):
         queries = [q.strip() for q in queries.split(",")]
+    if isinstance(sites, str):
+        sites = [s.strip() for s in sites.split(",")]
 
     conn = _conn()
     cur = conn.cursor()
@@ -2458,12 +2602,12 @@ def worker_discover_result(payload: dict = Body(...)):
         cur.execute("SELECT 1 FROM career_discover_job WHERE id = %s", (int(job_id),))
         if not cur.fetchone():
             raise HTTPException(404, "Discovery job not found")
-        summary = _discover_and_add(cur, companies, queries)
+        summary = _discover_and_add(cur, companies, queries, sites)
         summary["proposed_companies"] = len(companies)
         cur.execute(
             "UPDATE career_discover_job SET status = 'done', proposal = %s::jsonb, "
             "summary = %s::jsonb, error = NULL, finished_at = NOW() WHERE id = %s",
-            (json.dumps({"companies": companies, "queries": queries}),
+            (json.dumps({"companies": companies, "queries": queries, "sites": sites}),
              json.dumps(summary), int(job_id)),
         )
         conn.commit()

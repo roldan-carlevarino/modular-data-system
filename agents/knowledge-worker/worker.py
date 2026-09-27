@@ -683,6 +683,8 @@ DISCOVER_SYSTEM_PROMPT = (
     "perfiles (tech, fintech, IA, trading cuantitativo, laboratorios, hedge funds). "
     "NO inventes nombres. Un validador comprobara cada empresa en vivo y descartara "
     "las que no existan, asi que la calidad importa mas que la cantidad.\n"
+    "- PRIORIZA empresas que contraten en las UBICACIONES preferidas del candidato "
+    "(o totalmente remoto). Evita empresas que solo contraten fuera de esas zonas.\n"
     "- Usa el nombre comun de la empresa (ej. 'Jane Street', 'Two Sigma', 'Hudson "
     "River Trading', 'Scale AI'), no dominios ni URLs.\n"
     "- NO repitas las empresas ni las queries que ya estan en la lista de conocidas.\n"
@@ -691,11 +693,13 @@ DISCOVER_SYSTEM_PROMPT = (
 )
 
 
-def _build_discover_prompt(profile_context, known_companies, known_queries):
+def _build_discover_prompt(profile_context, known_companies, known_queries, locations=None):
     known_c = ", ".join(known_companies[:120]) or "(ninguna)"
     known_q = ", ".join(known_queries[:40]) or "(ninguna)"
+    locs = ", ".join(locations or []) or "(cualquiera)"
     return (
         f"{profile_context}\n\n"
+        f"UBICACIONES PREFERIDAS (prioriza empresas que contraten aqui o remoto): {locs}\n\n"
         f"EMPRESAS YA CONFIGURADAS (no las repitas):\n{known_c}\n\n"
         f"QUERIES YA CONFIGURADAS (no las repitas):\n{known_q}\n\n"
         "Propon nuevas empresas reales y nuevas frases de busqueda que encajen "
@@ -719,11 +723,12 @@ def process_discover(session):
     ctx = job.get("profile_context") or ""
     known_c = job.get("known_companies") or []
     known_q = job.get("known_queries") or []
+    locations = job.get("locations") or []
     print(f"[discover {job_id}] proposing (known: {len(known_c)} companies)")
     try:
         out = _run_ollama_json(
             DISCOVER_SYSTEM_PROMPT,
-            _build_discover_prompt(ctx, known_c, known_q),
+            _build_discover_prompt(ctx, known_c, known_q, locations),
         )
         body = {
             "job_id": job_id,

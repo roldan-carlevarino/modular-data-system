@@ -665,6 +665,10 @@ _TARGET_QUERIES = [
     "quantitative trading", "quantitative research", "research assistant",
 ]
 
+# Default location gate applied to every fetched opening (a posting is kept if it
+# is remote or its location matches one of these). Overridden by the profile.
+_TARGET_LOCATIONS = ["amsterdam", "remote", "madrid", "barcelona"]
+
 # Hard ceiling of raw items pulled from a single source before local filtering,
 # so a huge board / deep pagination can't blow up memory or the scoring queue.
 _FETCH_CAP = 600
@@ -874,6 +878,16 @@ def _seed_default_sources(cur):
         )
 
 
+def _seed_profile_locations(cur):
+    """Seed the preferred locations once (only if the profile has none), so the
+    location gate works out of the box without overwriting later user edits."""
+    cur.execute("SELECT locations FROM career_profile WHERE id = 1")
+    row = cur.fetchone()
+    if row and not (row[0] or []):
+        cur.execute("UPDATE career_profile SET locations = %s WHERE id = 1",
+                    (_TARGET_LOCATIONS,))
+
+
 def migrate():
     """Create the opportunity-agent tables once at startup (called from main.py)."""
     conn = _conn()
@@ -881,6 +895,7 @@ def migrate():
         cur = conn.cursor()
         _ensure_agent_schema(cur)
         _seed_default_sources(cur)
+        _seed_profile_locations(cur)
         conn.commit()
         cur.close()
     finally:
@@ -1405,6 +1420,21 @@ def _passes_filters(opp: dict, filters: dict) -> bool:
     return True
 
 
+def _location_ok(opp: dict, locations) -> bool:
+    """Keep a posting only if it is remote or its location matches one of the
+    wanted places. No location preference => everything passes."""
+    locs = [l.lower() for l in (locations or []) if l]
+    if not locs:
+        return True
+    wants_remote = any(l in ("remote", "remoto", "anywhere") for l in locs)
+    if wants_remote and opp.get("remote"):
+        return True
+    loc = (opp.get("location") or "").lower()
+    if not loc:
+        return False
+    return any(l in loc for l in locs)
+
+
 def _fingerprint(opp: dict) -> str:
     """Stable identity for a posting independent of the source, so the same role
     listed on a company board and an aggregator collapses to one row.
@@ -1545,13 +1575,17 @@ def _enqueue_score(cur, opp_id: int):
     )
 
 
-def _ingest_source(cur, source: dict) -> dict:
+def _ingest_source(cur, source: dict, locations=None) -> dict:
     items = _fetch_source(source)
     filters = source.get("filters") or {}
     inserted = 0
     duplicates = 0
+    off_location = 0
     for opp in items:
         if not _passes_filters(opp, filters):
+            continue
+        if not _location_ok(opp, locations):
+            off_location += 1
             continue
         fp = _fingerprint(opp)
         # Strong cross-source dedupe: skip a role already stored under any source.
@@ -1576,7 +1610,8 @@ def _ingest_source(cur, source: dict) -> dict:
         if row:
             _enqueue_score(cur, row[0])
             inserted += 1
-    return {"fetched": len(items), "inserted": inserted, "duplicates": duplicates}
+    return {"fetched": len(items), "inserted": inserted,
+            "duplicates": duplicates, "off_location": off_location}
 
 
 @router.post("/opportunities/fetch")
@@ -1597,14 +1632,20 @@ def fetch_opportunities(payload: dict = Body(default={})):
         if not sources:
             return {"sources": 0, "fetched": 0, "inserted": 0, "per_source": []}
 
+        # Preferred locations gate every source (falls back to the defaults).
+        cur.execute("SELECT locations FROM career_profile WHERE id = 1")
+        prow = cur.fetchone()
+        locations = (prow["locations"] if prow else None) or _TARGET_LOCATIONS
+
         total_fetched = total_inserted = 0
         per_source = []
         for s in sources:
             src = _source_row(s)
             try:
-                res = _ingest_source(cur, src)
+                res = _ingest_source(cur, src, locations)
                 status = (f"ok: {res['inserted']} new / {res['fetched']} listed"
-                          f" / {res.get('duplicates', 0)} dup")
+                          f" / {res.get('duplicates', 0)} dup"
+                          f" / {res.get('off_location', 0)} off-loc")
             except Exception as e:  # noqa: BLE001
                 res = {"fetched": 0, "inserted": 0}
                 status = f"error: {e}"
@@ -2060,12 +2101,16 @@ def worker_discover_claim(payload: dict = Body(default={})):
             if isinstance(filt, str):
                 filt = json.loads(filt)
             known_queries.extend(filt.get("queries") or [])
+        cur.execute("SELECT locations FROM career_profile WHERE id = 1")
+        prow = cur.fetchone()
+        locations = (prow["locations"] if prow else None) or _TARGET_LOCATIONS
         conn.commit()
         return {"job": {
             "id": row["id"],
             "profile_context": ctx,
             "known_companies": known_companies,
             "known_queries": sorted(set(known_queries)),
+            "locations": locations,
         }}
     except Exception as e:  # noqa: BLE001
         conn.rollback()

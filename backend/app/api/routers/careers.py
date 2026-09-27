@@ -647,6 +647,30 @@ SOURCE_KINDS = {"greenhouse", "lever", "ashby", "remotive", "arbeitnow", "remote
 SCORE_LEASE_MINUTES = 10
 _MAX_DESC = 6000
 
+# Keyword pre-filter tuned to the user's target roles: DS/ML/quant internships +
+# research assistant. Substring match on title+description (any of these hits).
+_TARGET_KEYWORDS = [
+    "data science intern", "data scientist intern",
+    "machine learning intern", "ml intern", "machine learning engineer intern",
+    "quantitative trading", "quantitative trader", "quant trading",
+    "quantitative research", "quantitative researcher", "quant research",
+    "quant intern", "research assistant", "research intern",
+    "research scientist intern",
+]
+
+# Seeded once (only when career_source is empty) so the user's preferred boards
+# exist out of the box. Greenhouse slugs verified to serve DS/ML/quant interns.
+_DEFAULT_SOURCES = [
+    {"kind": "greenhouse", "slug": "anthropic", "label": "Anthropic"},
+    {"kind": "greenhouse", "slug": "databricks", "label": "Databricks"},
+    {"kind": "greenhouse", "slug": "stripe", "label": "Stripe"},
+    {"kind": "greenhouse", "slug": "coinbase", "label": "Coinbase"},
+    {"kind": "greenhouse", "slug": "robinhood", "label": "Robinhood"},
+    {"kind": "remotive", "slug": "", "label": "Remotive"},
+    {"kind": "arbeitnow", "slug": "", "label": "Arbeitnow"},
+    {"kind": "remoteok", "slug": "", "label": "RemoteOK"},
+]
+
 _AGENT_SCHEMA_READY = False
 
 
@@ -734,12 +758,28 @@ def _ensure_agent_schema(cur):
     _AGENT_SCHEMA_READY = True
 
 
+def _seed_default_sources(cur):
+    """Insert the user's preferred sources once, only if none exist yet (so a
+    later manual deletion is not undone on the next startup)."""
+    cur.execute("SELECT COUNT(*) FROM career_source")
+    if cur.fetchone()[0] > 0:
+        return
+    for s in _DEFAULT_SOURCES:
+        cur.execute(
+            "INSERT INTO career_source (kind, slug, label, enabled, filters) "
+            "VALUES (%s, %s, %s, TRUE, %s::jsonb)",
+            (s["kind"], s["slug"], s["label"],
+             json.dumps({"keywords": _TARGET_KEYWORDS})),
+        )
+
+
 def migrate():
     """Create the opportunity-agent tables once at startup (called from main.py)."""
     conn = _conn()
     try:
         cur = conn.cursor()
         _ensure_agent_schema(cur)
+        _seed_default_sources(cur)
         conn.commit()
         cur.close()
     finally:

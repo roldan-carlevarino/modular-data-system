@@ -645,7 +645,7 @@ async def import_linkedin_csv(file: UploadFile = File(...)):
 import html as _html  # noqa: E402  (local import keeps the top of the file lean)
 
 SOURCE_KINDS = {"greenhouse", "lever", "ashby", "smartrecruiters",
-                "optiver", "remotive", "arbeitnow", "remoteok"}
+                "optiver", "site", "remotive", "arbeitnow", "remoteok"}
 SCORE_LEASE_MINUTES = 10
 _MAX_DESC = 6000
 
@@ -765,6 +765,10 @@ _DEFAULT_SOURCES = [
     {"kind": "lever", "slug": "palantir", "label": "Palantir"},
     # --- Bespoke (custom career APIs) ---
     {"kind": "optiver", "slug": "", "label": "Optiver"},
+    # --- Static-HTML careers pages (no ATS) ---
+    {"kind": "site", "slug": "https://forecastingresearch.org/careers",
+     "label": "Forecasting Research Institute",
+     "filters": {"link_pattern": r"^/careers/[a-z0-9-]+$"}},
     # --- Aggregators (paginated / term-searched, cover the long tail) ---
     {"kind": "remotive", "slug": "", "label": "Remotive"},
     {"kind": "arbeitnow", "slug": "", "label": "Arbeitnow"},
@@ -898,11 +902,11 @@ def _seed_default_sources(cur):
         )
         if cur.fetchone():
             continue
+        filt = {"keywords": _TARGET_KEYWORDS, **(s.get("filters") or {})}
         cur.execute(
             "INSERT INTO career_source (kind, slug, label, enabled, filters) "
             "VALUES (%s, %s, %s, TRUE, %s::jsonb)",
-            (s["kind"], s["slug"], s["label"],
-             json.dumps({"keywords": _TARGET_KEYWORDS})),
+            (s["kind"], s["slug"], s["label"], json.dumps(filt)),
         )
 
 
@@ -1220,7 +1224,7 @@ def create_source(payload: dict = Body(...)):
     if kind not in SOURCE_KINDS:
         raise HTTPException(400, f"kind must be one of {sorted(SOURCE_KINDS)}")
     # Aggregators (remotive/remoteok/arbeitnow) don't need a board slug.
-    if kind in {"greenhouse", "lever", "ashby", "smartrecruiters"} and not slug:
+    if kind in {"greenhouse", "lever", "ashby", "smartrecruiters", "site"} and not slug:
         raise HTTPException(400, f"{kind} requires a board slug (the company token)")
     filters = payload.get("filters") or {}
     if not isinstance(filters, dict):
@@ -1319,6 +1323,37 @@ def _strip_html(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     return text.strip()[:_MAX_DESC]
+
+
+def _http_get_text(url: str, timeout: int = 20, ua: str = None) -> str:
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ua or "Mozilla/5.0 (compatible; modular-data-careers/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="ignore")
+
+
+def _html_to_text(html: str) -> str:
+    """Plain text of an HTML page (drops script/style bodies first)."""
+    html = re.sub(r"<script.*?</script>", " ", html, flags=re.S | re.I)
+    html = re.sub(r"<style.*?</style>", " ", html, flags=re.S | re.I)
+    return _strip_html(html)
+
+
+def _page_title(html: str) -> str:
+    """Best-effort job title from a page: prefer <h1>, else <title> (suffix trimmed)."""
+    m = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.S | re.I)
+    if m:
+        t = _html.unescape(re.sub(r"<[^>]+>", " ", m.group(1)))
+        return re.sub(r"\s+", " ", t).strip()[:200]
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    if not m:
+        return ""
+    t = _html.unescape(re.sub(r"<[^>]+>", " ", m.group(1)))
+    t = re.sub(r"\s+", " ", t).strip()
+    t = re.split(r"\s[–|»-]\s", t)[0].strip()  # drop " – Company" style suffix
+    return t[:200]
 
 
 def _parse_ts(val):
@@ -1517,6 +1552,53 @@ def _fetch_source(source: dict) -> list:
                     "remote": False,
                     "posted_at": None,
                     "raw": {"domain": j.get("domain"), "experience": j.get("experience")},
+                })
+        elif kind == "site":
+            # Generic static-HTML careers reader (no browser/JS). slug = index URL;
+            # optional filters.link_pattern (regex on path) selects job links.
+            ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120 Safari/537.36")
+            index_html = _http_get_text(slug, ua=ua)
+            base = urllib.parse.urlparse(slug)
+            base_depth = base.path.rstrip("/").count("/")
+            fpat = (source.get("filters") or {}).get("link_pattern")
+            seen_u, job_urls = set(), []
+            for href in re.findall(r'href="([^"#?]+)"', index_html):
+                absu = urllib.parse.urljoin(slug, href)
+                pu = urllib.parse.urlparse(absu)
+                if pu.netloc != base.netloc:
+                    continue
+                if fpat:
+                    if not re.search(fpat, pu.path):
+                        continue
+                elif not (pu.path.rstrip("/").startswith(base.path.rstrip("/") + "/")
+                          and pu.path.rstrip("/").count("/") == base_depth + 1):
+                    continue
+                if absu not in seen_u:
+                    seen_u.add(absu)
+                    job_urls.append(absu)
+            for ju in job_urls[:60]:
+                if len(out) >= _FETCH_CAP:
+                    break
+                try:
+                    page = _http_get_text(ju, ua=ua)
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+                    continue
+                title = _page_title(page)
+                if not title:
+                    continue
+                text = _html_to_text(page)
+                remote = "remote" in text.lower()
+                out.append({
+                    "external_id": f"site:{ju}",
+                    "title": title,
+                    "company": label or base.netloc,
+                    "location": "Remote" if remote else "",
+                    "url": ju,
+                    "description": text,
+                    "remote": remote,
+                    "posted_at": None,
+                    "raw": {},
                 })
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
         return []

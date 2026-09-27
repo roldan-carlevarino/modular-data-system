@@ -644,7 +644,8 @@ async def import_linkedin_csv(file: UploadFile = File(...)):
 
 import html as _html  # noqa: E402  (local import keeps the top of the file lean)
 
-SOURCE_KINDS = {"greenhouse", "lever", "ashby", "remotive", "arbeitnow", "remoteok"}
+SOURCE_KINDS = {"greenhouse", "lever", "ashby", "smartrecruiters",
+                "remotive", "arbeitnow", "remoteok"}
 SCORE_LEASE_MINUTES = 10
 _MAX_DESC = 6000
 
@@ -677,7 +678,7 @@ _FETCH_CAP = 600
 # --- Dynamic source discovery ---
 DISCOVER_LEASE_MINUTES = 10
 # ATS providers we can validate live from a company name.
-_DISCOVER_KINDS = ["greenhouse", "lever", "ashby"]
+_DISCOVER_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters"]
 # A board only auto-activates if at least this many of its live titles look like
 # a relevant role (hard evidence the board actually posts what the user wants).
 _DISCOVER_MIN_MATCHES = 1
@@ -730,6 +731,9 @@ _DEFAULT_SOURCES = [
     {"kind": "greenhouse", "slug": "drweng", "label": "DRW"},
     {"kind": "greenhouse", "slug": "imc", "label": "IMC Trading"},
     {"kind": "greenhouse", "slug": "janestreet", "label": "Jane Street"},
+    {"kind": "greenhouse", "slug": "davinciderivatives", "label": "Da Vinci Derivatives"},
+    {"kind": "greenhouse", "slug": "flowtraders", "label": "Flow Traders"},
+    {"kind": "greenhouse", "slug": "akunacapital", "label": "Akuna Capital"},
     # --- Ashby boards ---
     {"kind": "ashby", "slug": "openai", "label": "OpenAI"},
     {"kind": "ashby", "slug": "ramp", "label": "Ramp"},
@@ -1163,7 +1167,7 @@ def create_source(payload: dict = Body(...)):
     if kind not in SOURCE_KINDS:
         raise HTTPException(400, f"kind must be one of {sorted(SOURCE_KINDS)}")
     # Aggregators (remotive/remoteok/arbeitnow) don't need a board slug.
-    if kind in {"greenhouse", "lever", "ashby"} and not slug:
+    if kind in {"greenhouse", "lever", "ashby", "smartrecruiters"} and not slug:
         raise HTTPException(400, f"{kind} requires a board slug (the company token)")
     filters = payload.get("filters") or {}
     if not isinstance(filters, dict):
@@ -1334,6 +1338,38 @@ def _fetch_source(source: dict) -> list:
                     "posted_at": _parse_ts(j.get("publishedAt")),
                     "raw": {"id": j.get("id"), "department": j.get("department")},
                 })
+        elif kind == "smartrecruiters":
+            offset = 0
+            while len(out) < _FETCH_CAP:
+                data = _http_get_json(
+                    f"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100&offset={offset}"
+                )
+                content = data.get("content") or []
+                if not content:
+                    break
+                for j in content:
+                    loc = j.get("location") or {}
+                    locstr = loc.get("fullLocation") or ", ".join(
+                        x for x in [loc.get("city"), (loc.get("country") or "").upper()] if x)
+                    bits = [j.get("name") or ""]
+                    for k in ("function", "typeOfEmployment", "experienceLevel", "industry", "department"):
+                        lab = (j.get(k) or {}).get("label")
+                        if lab:
+                            bits.append(lab)
+                    out.append({
+                        "external_id": f"sr:{slug}:{j.get('id')}",
+                        "title": j.get("name"),
+                        "company": label or (j.get("company") or {}).get("name"),
+                        "location": locstr,
+                        "url": f"https://jobs.smartrecruiters.com/{slug}/{j.get('id')}",
+                        "description": " · ".join(bits),
+                        "remote": bool(loc.get("remote")),
+                        "posted_at": _parse_ts(j.get("releasedDate")),
+                        "raw": {"id": j.get("id")},
+                    })
+                offset += 100
+                if offset >= (data.get("totalFound") or 0):
+                    break
         elif kind == "remotive":
             # Active term search: hit the API once per target phrase so we pull
             # relevant postings deep in the catalog, not just the newest 50.
@@ -1451,17 +1487,27 @@ def _fingerprint(opp: dict) -> str:
 
 
 def _slug_variants(name: str) -> list:
-    """Candidate ATS board slugs derived from a free-text company name."""
+    """Candidate ATS board slugs derived from a free-text company name. Yields the
+    full name AND a suffix-trimmed version (so both 'akunacapital' and 'akuna'
+    are tried), plus a PascalCase form used by SmartRecruiters."""
     base = (name or "").strip().lower()
     if not base:
         return []
-    base = re.sub(r"[.&/]", " ", base)
-    base = re.sub(r"\b(inc|llc|ltd|corp|co|group|capital|holdings|technologies|labs)\b",
-                  " ", base)
+    base = re.sub(r"[.,&/]", " ", base)
     words = [w for w in re.split(r"[^a-z0-9]+", base) if w]
     if not words:
         return []
-    variants = ["".join(words), "-".join(words), words[0]]
+    suffixes = {"inc", "llc", "ltd", "corp", "co", "group", "capital", "holdings",
+                "technologies", "labs", "bv", "the"}
+    trimmed = [w for w in words if w not in suffixes] or words
+    variants = [
+        "".join(words),                        # full compact  (akunacapital)
+        "-".join(words),                       # full dashed
+        "".join(trimmed),                      # trimmed compact (akuna)
+        "-".join(trimmed),                     # trimmed dashed
+        "".join(w.capitalize() for w in words),  # PascalCase (SmartRecruiters)
+        words[0],                              # first word
+    ]
     seen, out = set(), []
     for v in variants:
         if v and v not in seen:
@@ -1486,6 +1532,11 @@ def _probe_board(kind: str, slug: str):
             data = _http_get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}", timeout=8)
             jobs = data.get("jobs", [])
             titles = [j.get("title") or "" for j in jobs]
+        elif kind == "smartrecruiters":
+            data = _http_get_json(
+                f"https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100", timeout=8)
+            jobs = data.get("content", []) if (data.get("totalFound") or 0) else []
+            titles = [j.get("name") or "" for j in jobs]
         else:
             return (0, 0)
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError, OSError):

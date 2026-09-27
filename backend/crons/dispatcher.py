@@ -1,6 +1,7 @@
 from cron_task import create_daily_tasks
 from cron_rss import main as process_rss_feeds
 from cron_calendar import create_daily_calendar
+from cron_careers import main as fetch_career_opportunities
 
 
 def dispatch_crons():
@@ -9,6 +10,7 @@ def dispatch_crons():
         ("Tasks", create_daily_tasks),
         ("Calendar Template", create_daily_calendar),
         ("RSS Feeds", process_rss_feeds),
+        ("Career Opportunities", fetch_career_opportunities),
     ]
     
     for name, cron_func in crons:

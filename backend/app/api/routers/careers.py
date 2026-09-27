@@ -11,12 +11,16 @@ import csv
 import io
 import json
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import date, datetime
 from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 router = APIRouter(prefix="/careers", tags=["Careers"])
 
@@ -625,6 +629,1037 @@ async def import_linkedin_csv(file: UploadFile = File(...)):
         "skipped": skipped,
         "errors": errors[:20],
     }
+
+
+# ==========================================================================
+# Opportunity agent: profile + market sources + AI fit scoring
+# --------------------------------------------------------------------------
+# The agent fetches openings from public job-board APIs, scores each against
+# the user's profile (CV + projects + library) with the local LLM running on
+# the Mac knowledge-worker (via a claim/result queue mirroring kn_chat), and
+# lets the user promote a scored opportunity into the kanban pipeline.
+# NOTE: all routes here are declared BEFORE /{app_id} to avoid path collision.
+# ==========================================================================
+
+import html as _html  # noqa: E402  (local import keeps the top of the file lean)
+
+SOURCE_KINDS = {"greenhouse", "lever", "ashby", "remotive", "arbeitnow", "remoteok"}
+SCORE_LEASE_MINUTES = 10
+_MAX_DESC = 6000
+
+_AGENT_SCHEMA_READY = False
+
+
+def _ensure_agent_schema(cur):
+    """Idempotent DDL for the opportunity-agent tables (guarded, runs once)."""
+    global _AGENT_SCHEMA_READY
+    if _AGENT_SCHEMA_READY:
+        return
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS career_profile (
+            id          INTEGER PRIMARY KEY DEFAULT 1,
+            headline    TEXT,
+            summary     TEXT,
+            cv_text     TEXT,
+            cv_filename TEXT,
+            skills      TEXT[]  NOT NULL DEFAULT '{}',
+            interests   TEXT[]  NOT NULL DEFAULT '{}',
+            locations   TEXT[]  NOT NULL DEFAULT '{}',
+            links       JSONB   NOT NULL DEFAULT '{}'::jsonb,
+            updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+            CONSTRAINT career_profile_singleton CHECK (id = 1)
+        )
+    """)
+    cur.execute("INSERT INTO career_profile (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS career_source (
+            id              SERIAL PRIMARY KEY,
+            kind            TEXT NOT NULL,
+            slug            TEXT NOT NULL,
+            label           TEXT,
+            enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+            filters         JSONB NOT NULL DEFAULT '{}'::jsonb,
+            last_fetched_at TIMESTAMP,
+            last_status     TEXT,
+            created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS career_opportunity (
+            id             SERIAL PRIMARY KEY,
+            source_id      INTEGER REFERENCES career_source(id) ON DELETE SET NULL,
+            source_kind    TEXT NOT NULL,
+            external_id    TEXT NOT NULL,
+            title          TEXT NOT NULL,
+            company        TEXT,
+            location       TEXT,
+            url            TEXT,
+            description    TEXT,
+            remote         BOOLEAN NOT NULL DEFAULT FALSE,
+            posted_at      TIMESTAMP,
+            raw            JSONB NOT NULL DEFAULT '{}'::jsonb,
+            fit_score      INTEGER,
+            fit_reason     TEXT,
+            suggested_type TEXT,
+            suggested_tags TEXT[] NOT NULL DEFAULT '{}',
+            gaps           TEXT,
+            score_status   TEXT NOT NULL DEFAULT 'pending',
+            model          TEXT,
+            scored_at      TIMESTAMP,
+            promoted_application_id INTEGER,
+            created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE (source_kind, external_id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS career_opp_status_idx ON career_opportunity(score_status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS career_opp_score_idx ON career_opportunity(fit_score DESC NULLS LAST)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS career_score_job (
+            id             SERIAL PRIMARY KEY,
+            opportunity_id INTEGER NOT NULL REFERENCES career_opportunity(id) ON DELETE CASCADE,
+            status         TEXT NOT NULL DEFAULT 'pending',
+            worker_id      TEXT,
+            attempts       INTEGER NOT NULL DEFAULT 0,
+            claimed_at     TIMESTAMP,
+            error          TEXT,
+            created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+            finished_at    TIMESTAMP
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS career_score_job_status_idx ON career_score_job(status)")
+    _AGENT_SCHEMA_READY = True
+
+
+def migrate():
+    """Create the opportunity-agent tables once at startup (called from main.py)."""
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+
+
+# ---------- Row serializers ----------
+
+def _profile_row(r):
+    return {
+        "headline": r["headline"],
+        "summary": r["summary"],
+        "cv_text": r["cv_text"],
+        "cv_filename": r["cv_filename"],
+        "has_cv": bool(r["cv_text"]),
+        "skills": list(r["skills"] or []),
+        "interests": list(r["interests"] or []),
+        "locations": list(r["locations"] or []),
+        "links": r["links"] or {},
+        "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+    }
+
+
+def _source_row(r):
+    return {
+        "id": r["id"],
+        "kind": r["kind"],
+        "slug": r["slug"],
+        "label": r["label"],
+        "enabled": r["enabled"],
+        "filters": r["filters"] or {},
+        "last_fetched_at": r["last_fetched_at"].isoformat() if r["last_fetched_at"] else None,
+        "last_status": r["last_status"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    }
+
+
+def _opportunity_row(r):
+    return {
+        "id": r["id"],
+        "source_id": r["source_id"],
+        "source_kind": r["source_kind"],
+        "external_id": r["external_id"],
+        "title": r["title"],
+        "company": r["company"],
+        "location": r["location"],
+        "url": r["url"],
+        "description": r["description"],
+        "remote": r["remote"],
+        "posted_at": r["posted_at"].isoformat() if r["posted_at"] else None,
+        "fit_score": r["fit_score"],
+        "fit_reason": r["fit_reason"],
+        "suggested_type": r["suggested_type"],
+        "suggested_tags": list(r["suggested_tags"] or []),
+        "gaps": r["gaps"],
+        "score_status": r["score_status"],
+        "model": r["model"],
+        "scored_at": r["scored_at"].isoformat() if r["scored_at"] else None,
+        "promoted_application_id": r["promoted_application_id"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+    }
+
+
+# ---------- Profile ----------
+
+@router.get("/profile")
+def get_profile():
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.execute("SELECT * FROM career_profile WHERE id = 1")
+        r = cur.fetchone()
+        return _profile_row(r) if r else {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _norm_list(val):
+    if val is None:
+        return None
+    if isinstance(val, str):
+        val = re.split(r"[,\n]", val)
+    if not isinstance(val, list):
+        raise HTTPException(400, "expected a list or comma-separated string")
+    return [str(v).strip() for v in val if str(v).strip()]
+
+
+@router.put("/profile")
+def update_profile(payload: dict = Body(...)):
+    fields, params = [], []
+    for col in ("headline", "summary", "cv_text"):
+        if col in payload:
+            fields.append(f"{col} = %s")
+            params.append(payload[col])
+    for col in ("skills", "interests", "locations"):
+        if col in payload:
+            fields.append(f"{col} = %s")
+            params.append(_norm_list(payload[col]) or [])
+    if "links" in payload:
+        if not isinstance(payload["links"], dict):
+            raise HTTPException(400, "links must be an object")
+        fields.append("links = %s::jsonb")
+        params.append(json.dumps(payload["links"]))
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+    fields.append("updated_at = NOW()")
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(f"UPDATE career_profile SET {', '.join(fields)} WHERE id = 1", params)
+        conn.commit()
+        return {"ok": True}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Failed to update profile: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/profile/cv")
+async def upload_cv(file: UploadFile = File(...)):
+    """Extract text from an uploaded CV (PDF) and store it on the profile."""
+    raw = await file.read()
+    name = file.filename or "cv.pdf"
+    text = ""
+    if name.lower().endswith(".pdf"):
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+        except Exception as e:
+            raise HTTPException(400, f"Could not read PDF: {e}")
+    else:
+        try:
+            text = raw.decode("utf-8", errors="ignore")
+        except Exception:
+            raise HTTPException(400, "Unsupported file; upload a PDF or plain text")
+
+    text = text.strip()
+    if not text:
+        raise HTTPException(400, "No text could be extracted from the file")
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(
+            "UPDATE career_profile SET cv_text = %s, cv_filename = %s, updated_at = NOW() WHERE id = 1",
+            (text[:40000], name),
+        )
+        conn.commit()
+        return {"ok": True, "filename": name, "chars": len(text)}
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _build_profile_context(cur) -> str:
+    """Assemble the full candidate profile the LLM scores against: stored
+    profile + active projects (projects_path) + a compact library snapshot."""
+    cur.execute("SELECT * FROM career_profile WHERE id = 1")
+    p = cur.fetchone()
+    parts = ["PERFIL DEL CANDIDATO"]
+    if p:
+        if p["headline"]:
+            parts.append(f"Titular: {p['headline']}")
+        if p["summary"]:
+            parts.append(f"Resumen: {p['summary']}")
+        if p["skills"]:
+            parts.append("Skills: " + ", ".join(p["skills"]))
+        if p["interests"]:
+            parts.append("Intereses: " + ", ".join(p["interests"]))
+        if p["locations"]:
+            parts.append("Ubicaciones preferidas: " + ", ".join(p["locations"]))
+        if p["links"]:
+            parts.append("Enlaces: " + ", ".join(f"{k}: {v}" for k, v in p["links"].items()))
+        if p["cv_text"]:
+            parts.append("\nCV:\n" + p["cv_text"][:6000])
+
+    # Active projects
+    try:
+        cur.execute("""
+            SELECT name, description FROM projects_path
+            WHERE status = 'active' ORDER BY path LIMIT 40
+        """)
+        proj = cur.fetchall()
+        if proj:
+            parts.append("\nPROYECTOS ACTIVOS:")
+            for pr in proj:
+                desc = (pr["description"] or "").strip()
+                parts.append(f"- {pr['name']}" + (f": {desc}" if desc else ""))
+    except Exception:
+        pass
+
+    # Compact library snapshot (reading / research interests)
+    try:
+        cur.execute("""
+            SELECT title, type, year FROM lib_item
+            ORDER BY added_at DESC LIMIT 30
+        """)
+        lib = cur.fetchall()
+        if lib:
+            parts.append("\nBIBLIOTECA / LECTURAS:")
+            for li in lib:
+                yr = f" ({li['year']})" if li["year"] else ""
+                parts.append(f"- [{li['type']}] {li['title']}{yr}")
+    except Exception:
+        pass
+
+    return "\n".join(parts)
+
+
+@router.get("/profile/context")
+def get_profile_context():
+    """Full profile context string used by the scoring worker."""
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        ctx = _build_profile_context(cur)
+        return {"context": ctx, "chars": len(ctx)}
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ---------- Sources ----------
+
+@router.get("/sources")
+def list_sources():
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.execute("SELECT * FROM career_source ORDER BY id")
+        return [_source_row(r) for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/sources")
+def create_source(payload: dict = Body(...)):
+    kind = (payload.get("kind") or "").strip().lower()
+    slug = (payload.get("slug") or "").strip()
+    if kind not in SOURCE_KINDS:
+        raise HTTPException(400, f"kind must be one of {sorted(SOURCE_KINDS)}")
+    # Aggregators (remotive/remoteok/arbeitnow) don't need a board slug.
+    if kind in {"greenhouse", "lever", "ashby"} and not slug:
+        raise HTTPException(400, f"{kind} requires a board slug (the company token)")
+    filters = payload.get("filters") or {}
+    if not isinstance(filters, dict):
+        raise HTTPException(400, "filters must be an object")
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("""
+            INSERT INTO career_source (kind, slug, label, enabled, filters)
+            VALUES (%s, %s, %s, %s, %s::jsonb) RETURNING id
+        """, (kind, slug, payload.get("label"), bool(payload.get("enabled", True)),
+              json.dumps(filters)))
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"id": new_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Failed to create source: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.patch("/sources/{sid}")
+def update_source(sid: int, payload: dict = Body(...)):
+    fields, params = [], []
+    for col in ("slug", "label"):
+        if col in payload:
+            fields.append(f"{col} = %s")
+            params.append(payload[col])
+    if "enabled" in payload:
+        fields.append("enabled = %s")
+        params.append(bool(payload["enabled"]))
+    if "filters" in payload:
+        if not isinstance(payload["filters"], dict):
+            raise HTTPException(400, "filters must be an object")
+        fields.append("filters = %s::jsonb")
+        params.append(json.dumps(payload["filters"]))
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+    params.append(sid)
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(f"UPDATE career_source SET {', '.join(fields)} WHERE id = %s", params)
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Source not found")
+        conn.commit()
+        return {"ok": True}
+    except HTTPException:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.delete("/sources/{sid}")
+def delete_source(sid: int):
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("DELETE FROM career_source WHERE id = %s", (sid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Source not found")
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ---------- Market fetchers (public job-board APIs, stdlib only) ----------
+
+def _http_get_json(url: str, timeout: int = 25):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "modular-data-careers/1.0",
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="ignore"))
+
+
+def _strip_html(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = _html.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    return text.strip()[:_MAX_DESC]
+
+
+def _parse_ts(val):
+    if val in (None, ""):
+        return None
+    if isinstance(val, (int, float)):
+        ts = val / 1000 if val > 1e11 else val
+        try:
+            return datetime.utcfromtimestamp(ts)
+        except (OverflowError, OSError, ValueError):
+            return None
+    s = str(val).strip()
+    if s.isdigit():
+        return _parse_ts(int(s))
+    s = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(s).replace(tzinfo=None)
+    except ValueError:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
+def _fetch_source(source: dict) -> list:
+    """Return a list of normalized opportunity dicts for one configured source.
+    Never raises: returns [] on any network/parse error (caller records status)."""
+    kind = source["kind"]
+    slug = (source.get("slug") or "").strip()
+    label = source.get("label") or slug
+    out = []
+    try:
+        if kind == "greenhouse":
+            data = _http_get_json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true")
+            for j in data.get("jobs", []):
+                loc = (j.get("location") or {}).get("name") or ""
+                out.append({
+                    "external_id": f"gh:{slug}:{j.get('id')}",
+                    "title": j.get("title"), "company": label, "location": loc,
+                    "url": j.get("absolute_url"),
+                    "description": _strip_html(j.get("content") or ""),
+                    "remote": "remote" in loc.lower(),
+                    "posted_at": _parse_ts(j.get("updated_at")),
+                    "raw": {"id": j.get("id")},
+                })
+        elif kind == "lever":
+            data = _http_get_json(f"https://api.lever.co/v0/postings/{slug}?mode=json")
+            for j in data:
+                cats = j.get("categories") or {}
+                loc = cats.get("location") or ""
+                out.append({
+                    "external_id": f"lever:{slug}:{j.get('id')}",
+                    "title": j.get("text"), "company": label, "location": loc,
+                    "url": j.get("hostedUrl"),
+                    "description": j.get("descriptionPlain") or _strip_html(j.get("description") or ""),
+                    "remote": "remote" in loc.lower() or (cats.get("commitment") or "").lower() == "remote",
+                    "posted_at": _parse_ts(j.get("createdAt")),
+                    "raw": {"id": j.get("id"), "team": cats.get("team")},
+                })
+        elif kind == "ashby":
+            data = _http_get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true")
+            for j in data.get("jobs", []):
+                loc = j.get("location") or ""
+                out.append({
+                    "external_id": f"ashby:{slug}:{j.get('id')}",
+                    "title": j.get("title"), "company": label, "location": loc,
+                    "url": j.get("jobUrl") or j.get("applyUrl"),
+                    "description": j.get("descriptionPlain") or _strip_html(j.get("descriptionHtml") or ""),
+                    "remote": bool(j.get("isRemote")) or "remote" in loc.lower(),
+                    "posted_at": _parse_ts(j.get("publishedAt")),
+                    "raw": {"id": j.get("id"), "department": j.get("department")},
+                })
+        elif kind == "remotive":
+            q = (source.get("filters") or {}).get("search") or ""
+            url = "https://remotive.com/api/remote-jobs?limit=50"
+            if q:
+                url += "&search=" + urllib.parse.quote(q)
+            data = _http_get_json(url)
+            for j in data.get("jobs", []):
+                out.append({
+                    "external_id": f"remotive:{j.get('id')}",
+                    "title": j.get("title"), "company": j.get("company_name"),
+                    "location": j.get("candidate_required_location") or "Remote",
+                    "url": j.get("url"),
+                    "description": _strip_html(j.get("description") or ""),
+                    "remote": True,
+                    "posted_at": _parse_ts(j.get("publication_date")),
+                    "raw": {"category": j.get("category")},
+                })
+        elif kind == "arbeitnow":
+            data = _http_get_json("https://www.arbeitnow.com/api/job-board-api")
+            for j in data.get("data", []):
+                out.append({
+                    "external_id": f"arbeitnow:{j.get('slug')}",
+                    "title": j.get("title"), "company": j.get("company_name"),
+                    "location": j.get("location") or "",
+                    "url": j.get("url"),
+                    "description": _strip_html(j.get("description") or ""),
+                    "remote": bool(j.get("remote")),
+                    "posted_at": _parse_ts(j.get("created_at")),
+                    "raw": {"tags": j.get("tags")},
+                })
+        elif kind == "remoteok":
+            data = _http_get_json("https://remoteok.com/api")
+            for j in data:
+                if not isinstance(j, dict) or not j.get("id"):
+                    continue
+                out.append({
+                    "external_id": f"remoteok:{j.get('id')}",
+                    "title": j.get("position") or j.get("title"),
+                    "company": j.get("company"),
+                    "location": j.get("location") or "Remote",
+                    "url": j.get("url"),
+                    "description": _strip_html(j.get("description") or ""),
+                    "remote": True,
+                    "posted_at": _parse_ts(j.get("date")),
+                    "raw": {"tags": j.get("tags")},
+                })
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
+        return []
+    # Drop malformed entries (need a title + external_id)
+    return [o for o in out if o.get("title") and o.get("external_id")]
+
+
+def _passes_filters(opp: dict, filters: dict) -> bool:
+    if not filters:
+        return True
+    hay = f"{opp.get('title','')} {opp.get('description','')} {opp.get('location','')}".lower()
+    kws = [k.lower() for k in (filters.get("keywords") or []) if k]
+    if kws and not any(k in hay for k in kws):
+        return False
+    excl = [k.lower() for k in (filters.get("exclude") or []) if k]
+    if excl and any(k in hay for k in excl):
+        return False
+    return True
+
+
+def _enqueue_score(cur, opp_id: int):
+    cur.execute(
+        "SELECT 1 FROM career_score_job WHERE opportunity_id = %s AND status IN ('pending','in_progress') LIMIT 1",
+        (opp_id,),
+    )
+    if not cur.fetchone():
+        cur.execute("INSERT INTO career_score_job (opportunity_id) VALUES (%s)", (opp_id,))
+    cur.execute(
+        "UPDATE career_opportunity SET score_status = 'queued', updated_at = NOW() WHERE id = %s",
+        (opp_id,),
+    )
+
+
+def _ingest_source(cur, source: dict) -> dict:
+    items = _fetch_source(source)
+    filters = source.get("filters") or {}
+    inserted = 0
+    for opp in items:
+        if not _passes_filters(opp, filters):
+            continue
+        cur.execute("""
+            INSERT INTO career_opportunity
+                (source_id, source_kind, external_id, title, company, location,
+                 url, description, remote, posted_at, raw)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (source_kind, external_id) DO NOTHING
+            RETURNING id
+        """, (
+            source.get("id"), source["kind"], opp["external_id"], opp["title"],
+            opp.get("company"), opp.get("location"), opp.get("url"),
+            opp.get("description"), opp.get("remote", False),
+            opp.get("posted_at"), json.dumps(opp.get("raw") or {}),
+        ))
+        row = cur.fetchone()
+        if row:
+            _enqueue_score(cur, row[0])
+            inserted += 1
+    return {"fetched": len(items), "inserted": inserted}
+
+
+@router.post("/opportunities/fetch")
+def fetch_opportunities(payload: dict = Body(default={})):
+    """Fetch openings from enabled sources, insert new ones and queue them for
+    AI scoring. Optional body {source_id} restricts to one source."""
+    source_id = payload.get("source_id")
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        if source_id:
+            cur.execute("SELECT * FROM career_source WHERE id = %s", (source_id,))
+        else:
+            cur.execute("SELECT * FROM career_source WHERE enabled = TRUE ORDER BY id")
+        sources = cur.fetchall()
+        if not sources:
+            return {"sources": 0, "fetched": 0, "inserted": 0, "per_source": []}
+
+        total_fetched = total_inserted = 0
+        per_source = []
+        for s in sources:
+            src = _source_row(s)
+            try:
+                res = _ingest_source(cur, src)
+                status = f"ok: {res['inserted']} new / {res['fetched']} listed"
+            except Exception as e:  # noqa: BLE001
+                res = {"fetched": 0, "inserted": 0}
+                status = f"error: {e}"
+            cur.execute(
+                "UPDATE career_source SET last_fetched_at = NOW(), last_status = %s WHERE id = %s",
+                (status[:300], src["id"]),
+            )
+            conn.commit()
+            total_fetched += res["fetched"]
+            total_inserted += res["inserted"]
+            per_source.append({"id": src["id"], "kind": src["kind"],
+                               "label": src["label"], **res, "status": status})
+        return {"sources": len(sources), "fetched": total_fetched,
+                "inserted": total_inserted, "per_source": per_source}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Fetch failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/opportunities/rescore")
+def rescore_opportunities(payload: dict = Body(default={})):
+    """Queue opportunities for (re)scoring. scope: 'unscored' (default) | 'all';
+    or pass explicit {ids: [...]}."""
+    ids = payload.get("ids")
+    scope = (payload.get("scope") or "unscored").strip()
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        if ids:
+            cur.execute(
+                "SELECT id FROM career_opportunity WHERE id = ANY(%s) AND promoted_application_id IS NULL",
+                (list(ids),),
+            )
+        elif scope == "all":
+            cur.execute("SELECT id FROM career_opportunity WHERE promoted_application_id IS NULL AND score_status != 'dismissed'")
+        else:
+            cur.execute("SELECT id FROM career_opportunity WHERE score_status IN ('pending','error')")
+        opp_ids = [r[0] for r in cur.fetchall()]
+        for oid in opp_ids:
+            _enqueue_score(cur, oid)
+        conn.commit()
+        return {"enqueued": len(opp_ids)}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/opportunities")
+def list_opportunities(
+    score_status: Optional[str] = Query(None),
+    source_kind: Optional[str] = Query(None),
+    min_score: Optional[int] = Query(None, ge=0, le=100),
+    q: Optional[str] = Query(None),
+    include_promoted: bool = Query(False),
+    include_dismissed: bool = Query(False),
+    sort: str = Query("score", pattern="^(score|new)$"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    where, params = [], []
+    if not include_promoted:
+        where.append("promoted_application_id IS NULL")
+    if not include_dismissed:
+        where.append("score_status != 'dismissed'")
+    if score_status:
+        where.append("score_status = %s")
+        params.append(score_status)
+    if source_kind:
+        where.append("source_kind = %s")
+        params.append(source_kind)
+    if min_score is not None:
+        where.append("fit_score >= %s")
+        params.append(min_score)
+    if q:
+        where.append("(title ILIKE %s OR company ILIKE %s OR description ILIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    order = ("fit_score DESC NULLS LAST, created_at DESC" if sort == "score"
+             else "created_at DESC")
+    params.extend([limit, offset])
+
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.execute(
+            f"SELECT * FROM career_opportunity {where_sql} ORDER BY {order} LIMIT %s OFFSET %s",
+            params,
+        )
+        return [_opportunity_row(r) for r in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/opportunities/stats")
+def opportunities_stats():
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE promoted_application_id IS NULL AND score_status != 'dismissed') AS open,
+                COUNT(*) FILTER (WHERE score_status = 'queued') AS queued,
+                COUNT(*) FILTER (WHERE score_status = 'scored' AND promoted_application_id IS NULL) AS scored,
+                COUNT(*) FILTER (WHERE fit_score >= 70 AND promoted_application_id IS NULL) AS strong,
+                COUNT(*) AS total
+            FROM career_opportunity
+        """)
+        return dict(cur.fetchone())
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/opportunities/{oid}/promote")
+def promote_opportunity(oid: int, payload: dict = Body(default={})):
+    """Create a kanban application from a scored opportunity (status 'saved')."""
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("SELECT * FROM career_opportunity WHERE id = %s", (oid,))
+        opp = cur.fetchone()
+        if not opp:
+            raise HTTPException(404, "Opportunity not found")
+        if opp["promoted_application_id"]:
+            return {"application_id": opp["promoted_application_id"], "already": True}
+
+        type_ = (payload.get("type") or opp["suggested_type"] or "internship").strip()
+        if type_ not in VALID_TYPES:
+            type_ = "internship"
+        company = opp["company"] or opp["source_kind"]
+        role = opp["title"]
+        notes_bits = []
+        if opp["fit_reason"]:
+            notes_bits.append(opp["fit_reason"])
+        if opp["gaps"]:
+            notes_bits.append("Qué me falta: " + opp["gaps"])
+        notes = "\n\n".join(notes_bits) or None
+        metadata = {
+            "origin": "agent",
+            "opportunity_id": oid,
+            "source_kind": opp["source_kind"],
+            "fit_score": opp["fit_score"],
+            "suggested_tags": list(opp["suggested_tags"] or []),
+        }
+        cur.execute("""
+            INSERT INTO career_application
+                (type, company, role, location, status, source, url, notes, metadata)
+            VALUES (%s, %s, %s, %s, 'saved', %s, %s, %s, %s::jsonb)
+            RETURNING id
+        """, (type_, company, role, opp["location"], opp["source_kind"],
+              opp["url"], notes, json.dumps(metadata)))
+        app_id = cur.fetchone()["id"]
+        _insert_status_event(cur, app_id, "saved", None)
+        cur.execute(
+            "UPDATE career_opportunity SET promoted_application_id = %s, updated_at = NOW() WHERE id = %s",
+            (app_id, oid),
+        )
+        conn.commit()
+        return {"application_id": app_id, "type": type_}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Promote failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/opportunities/{oid}/dismiss")
+def dismiss_opportunity(oid: int):
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(
+            "UPDATE career_opportunity SET score_status = 'dismissed', updated_at = NOW() WHERE id = %s",
+            (oid,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Opportunity not found")
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.delete("/opportunities/{oid}")
+def delete_opportunity(oid: int):
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("DELETE FROM career_opportunity WHERE id = %s", (oid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Opportunity not found")
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ---------- Scoring queue (claimed by the Mac knowledge-worker) ----------
+
+@router.post("/worker/score/claim")
+def worker_score_claim(payload: dict = Body(default={})):
+    """Worker pulls the next opportunity to score (leased). Includes the current
+    profile context so the worker can build the prompt in one round-trip."""
+    worker_id = (payload.get("worker_id") or "worker").strip()
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("""
+            WITH nxt AS (
+                SELECT id FROM career_score_job
+                WHERE status = 'pending'
+                   OR (status = 'in_progress'
+                       AND claimed_at < NOW() - INTERVAL '%s minutes')
+                ORDER BY id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE career_score_job j
+            SET status = 'in_progress', worker_id = %%s,
+                attempts = j.attempts + 1, claimed_at = NOW()
+            FROM nxt WHERE j.id = nxt.id
+            RETURNING j.id, j.opportunity_id
+        """ % SCORE_LEASE_MINUTES, (worker_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return {"job": None}
+        cur.execute("""
+            SELECT id, title, company, location, url, description, source_kind, remote
+            FROM career_opportunity WHERE id = %s
+        """, (row["opportunity_id"],))
+        opp = cur.fetchone()
+        ctx = _build_profile_context(cur)
+        conn.commit()
+        if not opp:
+            return {"job": None}
+        return {"job": {
+            "id": row["id"],
+            "opportunity_id": row["opportunity_id"],
+            "profile_context": ctx,
+            "opportunity": {
+                "title": opp["title"], "company": opp["company"],
+                "location": opp["location"], "url": opp["url"],
+                "remote": opp["remote"], "source_kind": opp["source_kind"],
+                "description": (opp["description"] or "")[:_MAX_DESC],
+            },
+        }}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"score claim failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/worker/score/result")
+def worker_score_result(payload: dict = Body(...)):
+    """Worker posts the fit score + classification for one opportunity."""
+    job_id = payload.get("job_id")
+    if job_id is None:
+        raise HTTPException(400, "job_id is required")
+    try:
+        score = int(payload.get("fit_score"))
+    except (TypeError, ValueError):
+        score = None
+    if score is not None:
+        score = max(0, min(100, score))
+    reason = (payload.get("fit_reason") or "").strip() or None
+    gaps = (payload.get("gaps") or "").strip() or None
+    stype = (payload.get("suggested_type") or "").strip()
+    if stype not in VALID_TYPES:
+        stype = None
+    tags = payload.get("suggested_tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",")]
+    tags = [str(t).strip() for t in tags if str(t).strip()][:12]
+    model = (payload.get("model") or "").strip() or None
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("SELECT opportunity_id FROM career_score_job WHERE id = %s", (int(job_id),))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Score job not found")
+        opp_id = r[0]
+        cur.execute("""
+            UPDATE career_opportunity
+            SET fit_score = %s, fit_reason = %s, suggested_type = %s,
+                suggested_tags = %s, gaps = %s, model = %s,
+                score_status = 'scored', scored_at = NOW(), updated_at = NOW()
+            WHERE id = %s
+        """, (score, reason, stype, tags, gaps, model, opp_id))
+        cur.execute(
+            "UPDATE career_score_job SET status = 'done', error = NULL, finished_at = NOW() WHERE id = %s",
+            (int(job_id),),
+        )
+        conn.commit()
+        return {"ok": True, "opportunity_id": opp_id}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"score result failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/worker/score/fail")
+def worker_score_fail(payload: dict = Body(...)):
+    job_id = payload.get("job_id")
+    error = (payload.get("error") or "unknown error")[:1000]
+    if job_id is None:
+        raise HTTPException(400, "job_id is required")
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("SELECT opportunity_id FROM career_score_job WHERE id = %s", (int(job_id),))
+        r = cur.fetchone()
+        cur.execute(
+            "UPDATE career_score_job SET status = 'error', error = %s, finished_at = NOW() WHERE id = %s",
+            (error, int(job_id)),
+        )
+        if r:
+            cur.execute(
+                "UPDATE career_opportunity SET score_status = 'error', updated_at = NOW() WHERE id = %s",
+                (r[0],),
+            )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
 
 
 @router.get("/{app_id}")

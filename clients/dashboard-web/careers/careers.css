@@ -947,3 +947,187 @@ textarea.careers__input {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 .careers__person-last--never { color: #b54545; opacity: 0.7; }
+
+/* ====== Discover — opportunity agent ====== */
+.careers__discover {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+.careers__panel {
+    background: var(--bg-secondary);
+    border: var(--border-thin) solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.careers__panel > summary {
+    cursor: pointer;
+    padding: 0.6rem 0.85rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    list-style: none;
+}
+.careers__panel > summary::-webkit-details-marker { display: none; }
+.careers__panel > summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 0.45rem;
+    color: var(--text-tertiary);
+    transition: transform 0.15s ease;
+}
+.careers__panel[open] > summary::before { transform: rotate(90deg); }
+.careers__panel-state {
+    font-weight: 400;
+    color: var(--accent-primary);
+    font-size: 0.72rem;
+    margin-left: 0.3rem;
+}
+.careers__panel-body {
+    padding: 0 0.85rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.careers__panel-actions {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 0.2rem;
+}
+
+/* Sources */
+.careers__source-add {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.careers__source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.3rem;
+}
+.careers__source {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.55rem;
+    border: var(--border-thin) solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    font-size: 0.8rem;
+}
+.careers__source-kind {
+    text-transform: uppercase;
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+    color: var(--accent-primary);
+    font-weight: 600;
+    min-width: 78px;
+}
+.careers__source-slug { font-weight: 600; }
+.careers__source-status {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: 0.72rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Controls */
+.careers__discover-controls {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.careers__discover-stats {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+/* Opportunity cards */
+.careers__opps {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.careers__opp {
+    display: flex;
+    gap: 0.75rem;
+    background: var(--bg-secondary);
+    border: var(--border-thin) solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.85rem;
+}
+.careers__opp-score {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: #fff;
+}
+.careers__opp-score--hi  { background: #2e7d5b; }
+.careers__opp-score--mid { background: #b58a2e; }
+.careers__opp-score--lo  { background: #9a4f4f; }
+.careers__opp-score--na  {
+    background: transparent;
+    color: var(--text-tertiary);
+    border: var(--border-thin) dashed var(--border-color);
+}
+.careers__opp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.careers__opp-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.careers__opp-title { font-weight: 600; font-size: 0.92rem; }
+.careers__opp-type {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent-primary);
+    border: var(--border-thin) solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem;
+}
+.careers__opp-sub {
+    font-size: 0.76rem;
+    color: var(--text-tertiary);
+}
+.careers__opp-reason {
+    margin: 0.1rem 0 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+.careers__opp-gaps {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+.careers__opp-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+.careers__opp-tag {
+    background: var(--bg-primary, transparent);
+    border: var(--border-thin) solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+}
+.careers__opp-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 0.25rem;
+}
+.careers__opp-actions .careers__btn { padding: 0.3rem 0.7rem; font-size: 0.78rem; }

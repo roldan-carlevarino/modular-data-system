@@ -578,6 +578,89 @@ def _answer_knowledge(session, question, top_k, history=None):
     return answer, results
 
 
+# ---------------------------------------------------------------------------
+# Careers opportunity agent: score fetched market openings against the user's
+# profile (CV + projects + library). Same claim/result queue shape as chat.
+# ---------------------------------------------------------------------------
+
+SCORE_SYSTEM_PROMPT = (
+    "Eres un asesor de carrera que evalua cuanto encaja una oportunidad laboral "
+    "(internship, new-grad, investigacion, phd, summer school o beca) con el "
+    "PERFIL de un candidato. Usa SOLO la informacion dada. Devuelve SOLO JSON "
+    "con esta forma exacta:\n"
+    "{\n"
+    '  "fit_score": number,            // 0-100, cuanto encaja con el perfil\n'
+    '  "fit_reason": string,           // 2-3 frases en espanol: por que encaja\n'
+    '  "suggested_type": string,       // uno de: internship, new_grad, research, phd, summer_school, grant\n'
+    '  "suggested_tags": [string],     // 3-6 areas/skills clave de la oferta\n'
+    '  "gaps": string                  // que le falta al candidato o como mejorar el encaje\n'
+    "}\n"
+    "Reglas:\n"
+    "- fit_score alto solo si skills, intereses, proyectos y nivel del candidato "
+    "coinciden con lo que pide la oferta. Sé exigente y realista.\n"
+    "- suggested_type DEBE ser exactamente uno de la lista.\n"
+    "- Responde SOLO el objeto JSON, sin texto adicional."
+)
+
+
+def _build_score_prompt(profile_context, opp):
+    remote = "sí" if opp.get("remote") else "no"
+    return (
+        f"{profile_context}\n\n"
+        "OPORTUNIDAD:\n"
+        f"Titulo: {opp.get('title')}\n"
+        f"Empresa: {opp.get('company')}\n"
+        f"Ubicacion: {opp.get('location')} (remoto: {remote})\n"
+        f"Fuente: {opp.get('source_kind')}\n"
+        f"Descripcion:\n{opp.get('description') or '(sin descripcion)'}\n\n"
+        "Evalua el encaje de esta oportunidad con el perfil y responde en JSON."
+    )
+
+
+def process_score(session):
+    """Claim and score one queued opportunity. Returns True if one was handled."""
+    r = session.post(
+        f"{API_BASE}/careers/worker/score/claim",
+        json={"worker_id": WORKER_ID},
+        timeout=30,
+    )
+    r.raise_for_status()
+    job = r.json().get("job")
+    if not job:
+        return False
+    job_id = job["id"]
+    opp = job.get("opportunity") or {}
+    ctx = job.get("profile_context") or ""
+    print(f"[score {job_id}] {opp.get('title')!r} @ {opp.get('company')!r}")
+    try:
+        out = _run_ollama_json(SCORE_SYSTEM_PROMPT, _build_score_prompt(ctx, opp))
+        body = {
+            "job_id": job_id,
+            "fit_score": out.get("fit_score"),
+            "fit_reason": out.get("fit_reason"),
+            "suggested_type": out.get("suggested_type"),
+            "suggested_tags": out.get("suggested_tags"),
+            "gaps": out.get("gaps"),
+            "model": OLLAMA_MODEL,
+        }
+        rr = session.post(
+            f"{API_BASE}/careers/worker/score/result", json=body, timeout=60,
+        )
+        rr.raise_for_status()
+        print(f"[score {job_id}] fit={out.get('fit_score')}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[score {job_id}] failed: {e}")
+        try:
+            session.post(
+                f"{API_BASE}/careers/worker/score/fail",
+                json={"job_id": job_id, "error": str(e)[:1000]},
+                timeout=30,
+            )
+        except Exception as e2:  # noqa: BLE001
+            print(f"[warn] could not report score failure {job_id}: {e2}")
+    return True
+
+
 def main():
     print(f"knowledge-worker starting: api={API_BASE} model={OLLAMA_MODEL} "
           f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
@@ -613,8 +696,11 @@ def main():
                 time.sleep(0.2)
                 continue
             try:
-                # Priority: chat turns (human waiting) > extraction > embed backfill.
+                # Priority: chat turns (human waiting) > careers scoring >
+                # extraction > embed backfill.
                 handled = process_chat(holder["session"])
+                if not handled:
+                    handled = process_score(holder["session"])
                 if not handled:
                     handled = process_one(holder["session"])
                 if not handled:

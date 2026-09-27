@@ -29,7 +29,7 @@ from routers.menu import router as menu_router
 from routers.welfare import router as welfare_router
 from routers.math_trainer import router as math_trainer_router
 from routers.library import router as library_router
-from routers.careers import router as careers_router
+from routers.careers import router as careers_router, migrate as careers_migrate
 from routers.graph import router as graph_router
 from routers.insights import router as insights_router
 from routers.knowledge_engine import router as knowledge_engine_router, migrate as knowledge_engine_migrate
@@ -325,6 +325,11 @@ try:
     knowledge_engine_migrate()
 except Exception as e:
     print(f"[migration] knowledge_engine warning: {e}")
+
+try:
+    careers_migrate()
+except Exception as e:
+    print(f"[migration] careers warning: {e}")
 
 app = FastAPI()
 

@@ -163,6 +163,18 @@
         $("careerImportLinkedinBtn").addEventListener("click", () => $("careerImportLinkedinFile").click());
         $("careerImportLinkedinFile").addEventListener("change", importLinkedinCsv);
 
+        // ---- Discover (opportunity agent) wiring ----
+        $("cvpSave").addEventListener("click", saveProfile);
+        $("cvpUploadBtn").addEventListener("click", () => $("cvpFile").click());
+        $("cvpFile").addEventListener("change", uploadCv);
+        $("srcAdd").addEventListener("click", addSource);
+        $("careerSourceList").addEventListener("click", onSourceListClick);
+        $("careerSourceList").addEventListener("change", onSourceListChange);
+        $("oppFetch").addEventListener("click", fetchOpportunities);
+        $("oppScore").addEventListener("click", scorePending);
+        $("oppRefresh").addEventListener("click", () => loadOpportunities());
+        $("careerOppList").addEventListener("click", onOppListClick);
+
         // Lazy-load on first activation
         $("tab13").addEventListener("change", () => {
             if ($("tab13").checked && !state.loaded) {
@@ -809,6 +821,12 @@
             loadPeople();
             loadPersonTags();
         }
+        if (view === "discover" && !discoverState.loaded) {
+            discoverState.loaded = true;
+            loadProfile();
+            loadSources();
+            loadOpportunities();
+        }
     }
 
     async function importLinkedinCsv(e) {
@@ -1017,6 +1035,270 @@
             loadPersonTags();
         } catch (e) {
             alert(`Delete failed: ${e.message}`);
+        }
+    }
+
+    // ==================================================================
+    // Discover: opportunity agent (profile + sources + AI fit scoring)
+    // ==================================================================
+    const discoverState = { profile: null, sources: [], opps: [], loaded: false };
+    let oppPollTimer = null;
+
+    async function loadProfile() {
+        try {
+            const p = await api("/careers/profile");
+            discoverState.profile = p;
+            $("cvpHeadline").value = p.headline || "";
+            $("cvpSummary").value = p.summary || "";
+            $("cvpSkills").value = (p.skills || []).join(", ");
+            $("cvpInterests").value = (p.interests || []).join(", ");
+            $("cvpLocations").value = (p.locations || []).join(", ");
+            $("cvpCvInfo").textContent = p.has_cv
+                ? `CV loaded${p.cv_filename ? `: ${p.cv_filename}` : ""}`
+                : "No CV uploaded yet.";
+            $("careerProfileState").textContent = p.has_cv ? "· CV ✓" : "";
+        } catch (e) {
+            $("cvpCvInfo").textContent = `Load failed: ${e.message}`;
+        }
+    }
+
+    async function saveProfile() {
+        const btn = $("cvpSave");
+        btn.disabled = true;
+        try {
+            await api("/careers/profile", "PUT", {
+                headline: $("cvpHeadline").value.trim(),
+                summary: $("cvpSummary").value.trim(),
+                skills: $("cvpSkills").value,
+                interests: $("cvpInterests").value,
+                locations: $("cvpLocations").value,
+            });
+            btn.textContent = "Saved ✓";
+            setTimeout(() => (btn.textContent = "Save profile"), 1500);
+        } catch (e) {
+            alert(`Save failed: ${e.message}`);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function uploadCv(e) {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const info = $("cvpCvInfo");
+        info.textContent = "Extracting…";
+        try {
+            const fd = new FormData();
+            fd.append("file", file);
+            const r = await fetch(`${API}/careers/profile/cv`, { method: "POST", body: fd });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.detail || `${r.status} ${r.statusText}`);
+            info.textContent = `CV loaded: ${j.filename} (${j.chars} chars)`;
+            $("careerProfileState").textContent = "· CV ✓";
+        } catch (err) {
+            info.textContent = `Upload failed: ${err.message}`;
+        } finally {
+            e.target.value = "";
+        }
+    }
+
+    async function loadSources() {
+        try {
+            discoverState.sources = await api("/careers/sources");
+            renderSources();
+        } catch (e) {
+            $("careerSourceList").innerHTML =
+                `<p class="careers__error">Load failed: ${escapeHtml(e.message)}</p>`;
+        }
+    }
+
+    function renderSources() {
+        const el = $("careerSourceList");
+        if (!discoverState.sources.length) {
+            el.innerHTML = '<p class="careers__hint">No sources yet. Add one above.</p>';
+            return;
+        }
+        el.innerHTML = discoverState.sources.map((s) => `
+            <div class="careers__source" data-id="${s.id}">
+                <label class="careers__toggle" title="Enabled">
+                    <input type="checkbox" data-act="toggle" ${s.enabled ? "checked" : ""}>
+                </label>
+                <span class="careers__source-kind">${escapeHtml(s.kind)}</span>
+                <span class="careers__source-slug">${escapeHtml(s.label || s.slug || "—")}</span>
+                <span class="careers__source-status">${escapeHtml(s.last_status || "never fetched")}</span>
+                <button class="careers__icon-btn" data-act="del" title="Delete">×</button>
+            </div>
+        `).join("");
+    }
+
+    async function addSource() {
+        const kind = $("srcKind").value;
+        const slug = $("srcSlug").value.trim();
+        const label = $("srcLabel").value.trim();
+        const kw = $("srcKeywords").value.split(",").map((k) => k.trim()).filter(Boolean);
+        const filters = kw.length ? { keywords: kw } : {};
+        try {
+            await api("/careers/sources", "POST", { kind, slug, label, filters });
+            $("srcSlug").value = "";
+            $("srcLabel").value = "";
+            $("srcKeywords").value = "";
+            loadSources();
+        } catch (e) {
+            alert(`Could not add source: ${e.message}`);
+        }
+    }
+
+    async function onSourceListChange(e) {
+        const cb = e.target.closest('[data-act="toggle"]');
+        if (!cb) return;
+        const id = e.target.closest(".careers__source").dataset.id;
+        try {
+            await api(`/careers/sources/${id}`, "PATCH", { enabled: cb.checked });
+        } catch (err) {
+            alert(`Update failed: ${err.message}`);
+            cb.checked = !cb.checked;
+        }
+    }
+
+    async function onSourceListClick(e) {
+        const btn = e.target.closest('[data-act="del"]');
+        if (!btn) return;
+        const id = e.target.closest(".careers__source").dataset.id;
+        if (!confirm("Delete this source?")) return;
+        try {
+            await api(`/careers/sources/${id}`, "DELETE");
+            loadSources();
+        } catch (err) {
+            alert(`Delete failed: ${err.message}`);
+        }
+    }
+
+    async function fetchOpportunities() {
+        const btn = $("oppFetch");
+        btn.disabled = true;
+        btn.textContent = "Fetching…";
+        try {
+            const r = await api("/careers/opportunities/fetch", "POST", {});
+            $("oppStats").textContent =
+                `${r.inserted} new from ${r.sources} source${r.sources === 1 ? "" : "s"} · scoring…`;
+            loadSources();
+            loadOpportunities();
+        } catch (e) {
+            alert(`Fetch failed: ${e.message}`);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Fetch opportunities";
+        }
+    }
+
+    async function scorePending() {
+        const btn = $("oppScore");
+        btn.disabled = true;
+        try {
+            const r = await api("/careers/opportunities/rescore", "POST", { scope: "unscored" });
+            $("oppStats").textContent = `${r.enqueued} queued for scoring…`;
+            loadOpportunities();
+        } catch (e) {
+            alert(`Score failed: ${e.message}`);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function loadOpportunities() {
+        const el = $("careerOppList");
+        try {
+            const [opps, stats] = await Promise.all([
+                api("/careers/opportunities?limit=200"),
+                api("/careers/opportunities/stats").catch(() => null),
+            ]);
+            discoverState.opps = opps;
+            if (stats) {
+                $("oppStats").textContent =
+                    `${stats.open} open · ${stats.strong} strong (≥70) · ${stats.queued} queued`;
+            }
+            renderOpportunities();
+            scheduleOppPoll();
+        } catch (e) {
+            el.innerHTML = `<div class="careers__error">Load failed: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    // Auto-refresh while scoring jobs are in flight (worker scores async).
+    function scheduleOppPoll() {
+        if (oppPollTimer) { clearTimeout(oppPollTimer); oppPollTimer = null; }
+        const pending = discoverState.opps.some((o) => o.score_status === "queued");
+        if (pending && currentView === "discover") {
+            oppPollTimer = setTimeout(loadOpportunities, 6000);
+        }
+    }
+
+    function renderOpportunities() {
+        const el = $("careerOppList");
+        if (!discoverState.opps.length) {
+            el.innerHTML = '<p class="careers__hint">No opportunities yet. Add sources and hit “Fetch opportunities”.</p>';
+            return;
+        }
+        el.innerHTML = discoverState.opps.map(renderOppCard).join("");
+    }
+
+    function renderOppCard(o) {
+        const s = o.fit_score;
+        const cls = s == null ? "na" : (s >= 70 ? "hi" : s >= 45 ? "mid" : "lo");
+        const tags = (o.suggested_tags || [])
+            .map((t) => `<span class="careers__opp-tag">${escapeHtml(t)}</span>`).join("");
+        let reason = "";
+        if (o.fit_reason) reason = `<p class="careers__opp-reason">${escapeHtml(o.fit_reason)}</p>`;
+        else if (o.score_status === "queued") reason = '<p class="careers__opp-reason careers__hint">Queued for scoring…</p>';
+        else if (o.score_status === "error") reason = '<p class="careers__opp-reason careers__error">Scoring failed.</p>';
+        return `
+            <article class="careers__opp" data-id="${o.id}">
+                <div class="careers__opp-score careers__opp-score--${cls}">${s == null ? "—" : s}</div>
+                <div class="careers__opp-main">
+                    <div class="careers__opp-head">
+                        <span class="careers__opp-title">${escapeHtml(o.title)}</span>
+                        ${o.suggested_type ? `<span class="careers__opp-type">${escapeHtml(TYPE_LABELS[o.suggested_type] || o.suggested_type)}</span>` : ""}
+                    </div>
+                    <div class="careers__opp-sub">
+                        ${escapeHtml(o.company || o.source_kind)}${o.location ? ` · ${escapeHtml(o.location)}` : ""}${o.remote ? " · remote" : ""}
+                    </div>
+                    ${reason}
+                    ${o.gaps ? `<p class="careers__opp-gaps"><strong>Gaps:</strong> ${escapeHtml(o.gaps)}</p>` : ""}
+                    ${tags ? `<div class="careers__opp-tags">${tags}</div>` : ""}
+                    <div class="careers__opp-actions">
+                        <button class="careers__btn careers__btn--primary" data-act="promote">Add to pipeline</button>
+                        <button class="careers__btn" data-act="dismiss">Dismiss</button>
+                        ${o.url ? `<a class="careers__btn careers__btn--ghost" href="${escapeAttr(o.url)}" target="_blank" rel="noopener">View posting ↗</a>` : ""}
+                    </div>
+                </div>
+            </article>`;
+    }
+
+    async function onOppListClick(e) {
+        const btn = e.target.closest("[data-act]");
+        if (!btn) return;
+        const card = e.target.closest(".careers__opp");
+        if (!card) return;
+        const id = card.dataset.id;
+        const act = btn.dataset.act;
+        if (act === "promote") {
+            btn.disabled = true;
+            try {
+                await api(`/careers/opportunities/${id}/promote`, "POST", {});
+                card.remove();
+                loadAndRender();  // refresh the kanban board
+                loadOpportunities();
+            } catch (err) {
+                alert(`Promote failed: ${err.message}`);
+                btn.disabled = false;
+            }
+        } else if (act === "dismiss") {
+            try {
+                await api(`/careers/opportunities/${id}/dismiss`, "POST");
+                card.remove();
+            } catch (err) {
+                alert(`Dismiss failed: ${err.message}`);
+            }
         }
     }
 

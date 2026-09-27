@@ -1569,6 +1569,7 @@
           <nav class="careers__subtabs" role="tablist">
             <button type="button" class="careers__subtab is-active" data-view="pipeline">Pipeline</button>
             <button type="button" class="careers__subtab" data-view="people">People</button>
+            <button type="button" class="careers__subtab" data-view="discover">Discover</button>
           </nav>
 
           <!-- Pipeline view -->
@@ -1627,6 +1628,78 @@
             <div class="careers__people-tags" id="careerPersonTags"></div>
 
             <div class="careers__people" id="careerPeople"></div>
+          </div>
+
+          <!-- Discover view (opportunity agent) -->
+          <div class="careers__view" data-view="discover" style="display:none">
+            <div class="careers__discover">
+              <details class="careers__panel" id="careerProfilePanel">
+                <summary>My profile <span id="careerProfileState" class="careers__panel-state"></span></summary>
+                <div class="careers__panel-body">
+                  <div class="careers__field">
+                    <label for="cvpHeadline">Headline</label>
+                    <input id="cvpHeadline" class="careers__input" placeholder="CS student seeking ML research internships">
+                  </div>
+                  <div class="careers__field">
+                    <label for="cvpSummary">Summary / goal</label>
+                    <textarea id="cvpSummary" class="careers__input" rows="3"
+                              placeholder="What you're looking for, seniority, domains…"></textarea>
+                  </div>
+                  <div class="careers__field-row">
+                    <div class="careers__field">
+                      <label for="cvpSkills">Skills (comma-separated)</label>
+                      <input id="cvpSkills" class="careers__input" placeholder="python, pytorch, C++, statistics">
+                    </div>
+                    <div class="careers__field">
+                      <label for="cvpInterests">Interests (comma-separated)</label>
+                      <input id="cvpInterests" class="careers__input" placeholder="quant, RL, systems">
+                    </div>
+                  </div>
+                  <div class="careers__field">
+                    <label for="cvpLocations">Preferred locations (comma-separated)</label>
+                    <input id="cvpLocations" class="careers__input" placeholder="London, remote, EU">
+                  </div>
+                  <div class="careers__panel-actions">
+                    <button id="cvpSave" class="careers__btn careers__btn--primary">Save profile</button>
+                    <button id="cvpUploadBtn" class="careers__btn" title="Extract text from your CV">Upload CV (PDF)</button>
+                    <input id="cvpFile" type="file" accept=".pdf,application/pdf,text/plain" style="display:none">
+                    <span id="cvpCvInfo" class="careers__hint"></span>
+                  </div>
+                  <p class="careers__hint">The agent also uses your active projects and library automatically.</p>
+                </div>
+              </details>
+
+              <details class="careers__panel" id="careerSourcesPanel">
+                <summary>Opportunity sources</summary>
+                <div class="careers__panel-body">
+                  <div class="careers__source-add">
+                    <select id="srcKind" class="careers__input careers__input--inline">
+                      <option value="greenhouse">Greenhouse</option>
+                      <option value="lever">Lever</option>
+                      <option value="ashby">Ashby</option>
+                      <option value="remotive">Remotive</option>
+                      <option value="arbeitnow">Arbeitnow</option>
+                      <option value="remoteok">RemoteOK</option>
+                    </select>
+                    <input id="srcSlug" class="careers__input careers__input--inline" placeholder="board token (e.g. stripe)">
+                    <input id="srcLabel" class="careers__input careers__input--inline" placeholder="label / company">
+                    <input id="srcKeywords" class="careers__input careers__input--inline" placeholder="keywords (comma, optional)">
+                    <button id="srcAdd" class="careers__btn careers__btn--primary">Add</button>
+                  </div>
+                  <p class="careers__hint">Greenhouse / Lever / Ashby need the company's board token. Remotive / Arbeitnow / RemoteOK are aggregators (no token needed; use keywords to filter).</p>
+                  <div id="careerSourceList" class="careers__source-list"></div>
+                </div>
+              </details>
+
+              <div class="careers__discover-controls">
+                <button id="oppFetch" class="careers__btn careers__btn--primary">Fetch opportunities</button>
+                <button id="oppScore" class="careers__btn">Score pending</button>
+                <button id="oppRefresh" class="careers__btn careers__btn--ghost">Refresh</button>
+                <div class="careers__discover-stats" id="oppStats"></div>
+              </div>
+
+              <div id="careerOppList" class="careers__opps"></div>
+            </div>
           </div>
         </section>
 

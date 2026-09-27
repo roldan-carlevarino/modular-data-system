@@ -19,6 +19,8 @@ Config via environment variables:
   WORKER_ID      Worker identifier           (default hostname)
   POLL_INTERVAL  Seconds between empty polls (default 5)
   MAX_CHUNKS     Max chunks per prompt       (default 8)
+  CAREERS_AUTO   1 to autonomously drive the careers pipeline (default 1)
+  CAREERS_INTERVAL_SEC  Seconds between careers cycles (default 21600 = 6h)
   VOICE_ENABLED  1 to run the wake-word voice mode on this machine (default 0);
                  see voice_mode.py for its own config + requirements-voice.txt.
 
@@ -47,6 +49,12 @@ EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "16"))
 WORKER_ID = os.environ.get("WORKER_ID", socket.gethostname())
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "8"))
+
+# Careers autonomy: when on, the worker drives the whole opportunity pipeline on
+# a timer (enqueue discovery -> fetch openings -> queue scoring) with no cron or
+# button. Interval in seconds (default 6h).
+CAREERS_AUTO = os.environ.get("CAREERS_AUTO", "1") == "1"
+CAREERS_INTERVAL_SEC = float(os.environ.get("CAREERS_INTERVAL_SEC", "21600"))
 
 # Voice mode (optional): an always-on wake-word listener on this machine's mic.
 # When it hears the wake word it pauses background jobs (so Ollama is free) and
@@ -756,6 +764,30 @@ def process_discover(session):
     return True
 
 
+def careers_orchestrate(session):
+    """Drive the full opportunity pipeline once: enqueue a discovery pass, fetch
+    new openings from every source, and queue anything unscored. The per-job LLM
+    work (discovery proposals + fit scoring) is then handled by the normal loop."""
+    try:
+        session.post(f"{API_BASE}/careers/discover", json={}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        print(f"[careers] discover enqueue failed: {e}")
+    try:
+        r = session.post(f"{API_BASE}/careers/opportunities/fetch", json={}, timeout=600)
+        r.raise_for_status()
+        data = r.json()
+        print(f"[careers] fetch: {data.get('inserted')} new from {data.get('sources')} source(s)")
+    except Exception as e:  # noqa: BLE001
+        print(f"[careers] fetch failed: {e}")
+    try:
+        r = session.post(f"{API_BASE}/careers/opportunities/rescore",
+                         json={"scope": "unscored"}, timeout=120)
+        r.raise_for_status()
+        print(f"[careers] queued for scoring: {r.json().get('enqueued')}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[careers] rescore failed: {e}")
+
+
 def main():
     print(f"knowledge-worker starting: api={API_BASE} model={OLLAMA_MODEL} "
           f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
@@ -783,6 +815,7 @@ def main():
             print(f"[voice] disabled: {e}")
             pause_event = None
 
+    last_careers = 0.0  # 0 => first loop iteration runs a careers cycle at once
     try:
         while True:
             # While a voice interaction is running, give it exclusive use of
@@ -790,6 +823,20 @@ def main():
             if pause_event is not None and pause_event.is_set():
                 time.sleep(0.2)
                 continue
+            # Autonomous careers pipeline: kick off a fetch/discovery cycle on a
+            # timer (first pass runs immediately on startup).
+            if CAREERS_AUTO and (time.monotonic() - last_careers) >= CAREERS_INTERVAL_SEC:
+                last_careers = time.monotonic()
+                try:
+                    careers_orchestrate(holder["session"])
+                except requests.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 401:
+                        token = login()
+                        holder["session"] = make_session(token)
+                    else:
+                        print(f"[careers] orchestrate HTTP error: {e}")
+                except Exception as e:  # noqa: BLE001
+                    print(f"[careers] orchestrate error: {e}")
             try:
                 # Priority: chat turns (human waiting) > careers scoring >
                 # source discovery > extraction > embed backfill.

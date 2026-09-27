@@ -1131,3 +1131,22 @@ textarea.careers__input {
     margin-top: 0.25rem;
 }
 .careers__opp-actions .careers__btn { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
+
+/* --- AI source discovery --- */
+.careers__discover-sources {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+.careers__badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--accent-primary);
+    border: var(--border-thin) solid var(--accent-primary);
+    border-radius: 999px;
+    padding: 0.02rem 0.35rem;
+    vertical-align: middle;
+}

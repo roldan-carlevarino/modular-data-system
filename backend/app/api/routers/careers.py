@@ -669,6 +669,19 @@ _TARGET_QUERIES = [
 # so a huge board / deep pagination can't blow up memory or the scoring queue.
 _FETCH_CAP = 600
 
+# --- Dynamic source discovery ---
+DISCOVER_LEASE_MINUTES = 10
+# ATS providers we can validate live from a company name.
+_DISCOVER_KINDS = ["greenhouse", "lever", "ashby"]
+# A board only auto-activates if at least this many of its live titles look like
+# a relevant role (hard evidence the board actually posts what the user wants).
+_DISCOVER_MIN_MATCHES = 1
+# Broad hints used ONLY to gauge a discovered board's relevance from job titles.
+_DISCOVER_TITLE_HINTS = [
+    "intern", "research assistant", "research scientist", "quant",
+    "quantitative", "data scien", "machine learning", " ml ", "phd",
+]
+
 # Seeded once (only when career_source is empty) so the market is covered broadly
 # out of the box. Every slug below was probed live and returns openings; quant
 # firms included because they publish DS/ML/quant roles on these ATS boards.
@@ -810,6 +823,35 @@ def _ensure_agent_schema(cur):
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS career_score_job_status_idx ON career_score_job(status)")
+
+    # Dynamic source discovery + strong offer de-duplication (additive).
+    cur.execute("ALTER TABLE career_source ADD COLUMN IF NOT EXISTS discovered BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE career_source ADD COLUMN IF NOT EXISTS confidence INTEGER")
+    cur.execute("ALTER TABLE career_opportunity ADD COLUMN IF NOT EXISTS fingerprint TEXT")
+    # Backfill fingerprints for existing rows so cross-source dedupe is retroactive.
+    cur.execute("""
+        UPDATE career_opportunity SET fingerprint =
+            regexp_replace(lower(coalesce(company,'')), '[^a-z0-9]', '', 'g') || '|' ||
+            btrim(regexp_replace(lower(coalesce(title,'')), '[^a-z0-9]+', ' ', 'g'))
+        WHERE fingerprint IS NULL
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS career_opp_fingerprint_idx ON career_opportunity(fingerprint)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS career_discover_job (
+            id          SERIAL PRIMARY KEY,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            worker_id   TEXT,
+            attempts    INTEGER NOT NULL DEFAULT 0,
+            claimed_at  TIMESTAMP,
+            proposal    JSONB,
+            summary     JSONB,
+            error       TEXT,
+            created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMP
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS career_discover_job_status_idx ON career_discover_job(status)")
     _AGENT_SCHEMA_READY = True
 
 
@@ -870,6 +912,8 @@ def _source_row(r):
         "label": r["label"],
         "enabled": r["enabled"],
         "filters": r["filters"] or {},
+        "discovered": r.get("discovered", False),
+        "confidence": r.get("confidence"),
         "last_fetched_at": r["last_fetched_at"].isoformat() if r["last_fetched_at"] else None,
         "last_status": r["last_status"],
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
@@ -1361,6 +1405,133 @@ def _passes_filters(opp: dict, filters: dict) -> bool:
     return True
 
 
+def _fingerprint(opp: dict) -> str:
+    """Stable identity for a posting independent of the source, so the same role
+    listed on a company board and an aggregator collapses to one row.
+    Mirrors the SQL backfill in _ensure_agent_schema exactly."""
+    company = re.sub(r"[^a-z0-9]", "", (opp.get("company") or "").lower())
+    title = re.sub(r"[^a-z0-9]+", " ", (opp.get("title") or "").lower()).strip()
+    return f"{company}|{title}"
+
+
+def _slug_variants(name: str) -> list:
+    """Candidate ATS board slugs derived from a free-text company name."""
+    base = (name or "").strip().lower()
+    if not base:
+        return []
+    base = re.sub(r"[.&/]", " ", base)
+    base = re.sub(r"\b(inc|llc|ltd|corp|co|group|capital|holdings|technologies|labs)\b",
+                  " ", base)
+    words = [w for w in re.split(r"[^a-z0-9]+", base) if w]
+    if not words:
+        return []
+    variants = ["".join(words), "-".join(words), words[0]]
+    seen, out = set(), []
+    for v in variants:
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _probe_board(kind: str, slug: str):
+    """Lightweight live check of an ATS board. Returns (job_count, match_count)
+    using titles only; (0, 0) if the board doesn't exist or errors out."""
+    try:
+        if kind == "greenhouse":
+            data = _http_get_json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs")
+            jobs = data.get("jobs", [])
+            titles = [j.get("title") or "" for j in jobs]
+        elif kind == "lever":
+            data = _http_get_json(f"https://api.lever.co/v0/postings/{slug}?mode=json")
+            jobs = data if isinstance(data, list) else []
+            titles = [j.get("text") or "" for j in jobs]
+        elif kind == "ashby":
+            data = _http_get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
+            jobs = data.get("jobs", [])
+            titles = [j.get("title") or "" for j in jobs]
+        else:
+            return (0, 0)
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
+        return (0, 0)
+    if not jobs:
+        return (0, 0)
+    matches = sum(1 for t in titles if any(h in t.lower() for h in _DISCOVER_TITLE_HINTS))
+    return (len(jobs), matches)
+
+
+def _merge_queries(cur, queries) -> list:
+    """Add validated search phrases to the Remotive source(s) so Option-B term
+    search picks them up on the next fetch. Deduped, capped."""
+    clean, seen = [], set()
+    for q in queries or []:
+        q = str(q or "").strip()
+        if q and 3 <= len(q) <= 80 and q.lower() not in seen:
+            seen.add(q.lower())
+            clean.append(q)
+    if not clean:
+        return []
+    cur.execute("SELECT id, filters FROM career_source WHERE kind = 'remotive'")
+    for sid, filt in cur.fetchall():
+        filt = filt or {}
+        if isinstance(filt, str):
+            filt = json.loads(filt)
+        current = list(filt.get("queries") or [])
+        have = {x.lower() for x in current}
+        for q in clean:
+            if q.lower() not in have:
+                current.append(q)
+                have.add(q.lower())
+        filt["queries"] = current[:25]
+        cur.execute("UPDATE career_source SET filters = %s::jsonb WHERE id = %s",
+                    (json.dumps(filt), sid))
+    return clean
+
+
+def _discover_and_add(cur, companies, queries) -> dict:
+    """Hard-validate the worker's proposals against live ATS boards and add only
+    the ones that exist AND publish relevant roles. Never trusts the LLM blindly."""
+    cur.execute("SELECT kind, lower(slug) FROM career_source")
+    existing = {(r[0], r[1]) for r in cur.fetchall()}
+    added, rejected = [], []
+    seen_names = set()
+    for raw in (companies or [])[:40]:
+        name = str(raw or "").strip()
+        if not name or name.lower() in seen_names:
+            continue
+        seen_names.add(name.lower())
+        found = None
+        duplicate = False
+        for slug in _slug_variants(name):
+            for kind in _DISCOVER_KINDS:
+                if (kind, slug.lower()) in existing:
+                    duplicate = True
+                    continue
+                jc, mc = _probe_board(kind, slug)
+                if jc > 0 and mc >= _DISCOVER_MIN_MATCHES:
+                    found = (kind, slug, jc, mc)
+                    break
+            if found:
+                break
+        if found:
+            kind, slug, jc, mc = found
+            conf = min(100, 45 + mc * 6)
+            cur.execute(
+                "INSERT INTO career_source (kind, slug, label, enabled, discovered, confidence, filters) "
+                "VALUES (%s, %s, %s, TRUE, TRUE, %s, %s::jsonb) RETURNING id",
+                (kind, slug, name, conf, json.dumps({"keywords": _TARGET_KEYWORDS})),
+            )
+            existing.add((kind, slug.lower()))
+            added.append({"company": name, "kind": kind, "slug": slug,
+                          "confidence": conf, "matches": mc, "jobs": jc})
+        else:
+            rejected.append({"company": name,
+                             "reason": "already configured" if duplicate
+                             else "no validated board with relevant roles"})
+    queries_added = _merge_queries(cur, queries)
+    return {"added": added, "rejected": rejected, "queries_added": queries_added}
+
+
 def _enqueue_score(cur, opp_id: int):
     cur.execute(
         "SELECT 1 FROM career_score_job WHERE opportunity_id = %s AND status IN ('pending','in_progress') LIMIT 1",
@@ -1378,27 +1549,34 @@ def _ingest_source(cur, source: dict) -> dict:
     items = _fetch_source(source)
     filters = source.get("filters") or {}
     inserted = 0
+    duplicates = 0
     for opp in items:
         if not _passes_filters(opp, filters):
+            continue
+        fp = _fingerprint(opp)
+        # Strong cross-source dedupe: skip a role already stored under any source.
+        cur.execute("SELECT 1 FROM career_opportunity WHERE fingerprint = %s LIMIT 1", (fp,))
+        if cur.fetchone():
+            duplicates += 1
             continue
         cur.execute("""
             INSERT INTO career_opportunity
                 (source_id, source_kind, external_id, title, company, location,
-                 url, description, remote, posted_at, raw)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                 url, description, remote, posted_at, raw, fingerprint)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
             ON CONFLICT (source_kind, external_id) DO NOTHING
             RETURNING id
         """, (
             source.get("id"), source["kind"], opp["external_id"], opp["title"],
             opp.get("company"), opp.get("location"), opp.get("url"),
             opp.get("description"), opp.get("remote", False),
-            opp.get("posted_at"), json.dumps(opp.get("raw") or {}),
+            opp.get("posted_at"), json.dumps(opp.get("raw") or {}), fp,
         ))
         row = cur.fetchone()
         if row:
             _enqueue_score(cur, row[0])
             inserted += 1
-    return {"fetched": len(items), "inserted": inserted}
+    return {"fetched": len(items), "inserted": inserted, "duplicates": duplicates}
 
 
 @router.post("/opportunities/fetch")
@@ -1425,7 +1603,8 @@ def fetch_opportunities(payload: dict = Body(default={})):
             src = _source_row(s)
             try:
                 res = _ingest_source(cur, src)
-                status = f"ok: {res['inserted']} new / {res['fetched']} listed"
+                status = (f"ok: {res['inserted']} new / {res['fetched']} listed"
+                          f" / {res.get('duplicates', 0)} dup")
             except Exception as e:  # noqa: BLE001
                 res = {"fetched": 0, "inserted": 0}
                 status = f"error: {e}"
@@ -1781,6 +1960,177 @@ def worker_score_fail(payload: dict = Body(...)):
                 "UPDATE career_opportunity SET score_status = 'error', updated_at = NOW() WHERE id = %s",
                 (r[0],),
             )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        cur.close()
+        conn.close()
+
+
+# ---------- Source discovery (LLM proposes, backend hard-validates) ----------
+
+@router.post("/discover")
+def enqueue_discover():
+    """Queue one source-discovery pass. Reuses a pending job if one exists so the
+    queue can't pile up. The Mac worker proposes companies/queries; the backend
+    validates them live before anything is added."""
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(
+            "SELECT id FROM career_discover_job WHERE status IN ('pending','in_progress') ORDER BY id LIMIT 1"
+        )
+        row = cur.fetchone()
+        if row:
+            conn.commit()
+            return {"job_id": row[0], "already": True}
+        cur.execute("INSERT INTO career_discover_job (status) VALUES ('pending') RETURNING id")
+        jid = cur.fetchone()[0]
+        conn.commit()
+        return {"job_id": jid, "already": False}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.get("/discover/status")
+def discover_status():
+    """Latest discovery job (for the Discover UI): status + validation summary."""
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        conn.commit()
+        cur.execute("""
+            SELECT id, status, summary, error, created_at, finished_at
+            FROM career_discover_job ORDER BY id DESC LIMIT 1
+        """)
+        row = cur.fetchone()
+        if not row:
+            return {"job": None}
+        return {"job": {
+            "id": row["id"], "status": row["status"], "summary": row["summary"],
+            "error": row["error"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        }}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/worker/discover/claim")
+def worker_discover_claim(payload: dict = Body(default={})):
+    """Worker leases a discovery job and receives the profile context plus the
+    already-known companies/queries so the LLM proposes only NEW candidates."""
+    worker_id = (payload.get("worker_id") or "worker").strip()
+    conn = _conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("""
+            WITH nxt AS (
+                SELECT id FROM career_discover_job
+                WHERE status = 'pending'
+                   OR (status = 'in_progress'
+                       AND claimed_at < NOW() - INTERVAL '%s minutes')
+                ORDER BY id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE career_discover_job j
+            SET status = 'in_progress', worker_id = %%s,
+                attempts = j.attempts + 1, claimed_at = NOW()
+            FROM nxt WHERE j.id = nxt.id
+            RETURNING j.id
+        """ % DISCOVER_LEASE_MINUTES, (worker_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return {"job": None}
+        ctx = _build_profile_context(cur)
+        cur.execute("SELECT label, slug, kind FROM career_source")
+        srcs = cur.fetchall()
+        known_companies = sorted({(s["label"] or s["slug"]) for s in srcs if (s["label"] or s["slug"])})
+        cur.execute("SELECT filters FROM career_source WHERE kind = 'remotive'")
+        known_queries = []
+        for r in cur.fetchall():
+            filt = r["filters"] or {}
+            if isinstance(filt, str):
+                filt = json.loads(filt)
+            known_queries.extend(filt.get("queries") or [])
+        conn.commit()
+        return {"job": {
+            "id": row["id"],
+            "profile_context": ctx,
+            "known_companies": known_companies,
+            "known_queries": sorted(set(known_queries)),
+        }}
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        raise HTTPException(500, f"discover claim failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/worker/discover/result")
+def worker_discover_result(payload: dict = Body(...)):
+    """Worker posts proposed companies/queries; backend hard-validates them live
+    (board must exist and publish relevant roles) before adding any source."""
+    job_id = payload.get("job_id")
+    if job_id is None:
+        raise HTTPException(400, "job_id is required")
+    companies = payload.get("companies") or []
+    queries = payload.get("queries") or []
+    if isinstance(companies, str):
+        companies = [c.strip() for c in companies.split(",")]
+    if isinstance(queries, str):
+        queries = [q.strip() for q in queries.split(",")]
+
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute("SELECT 1 FROM career_discover_job WHERE id = %s", (int(job_id),))
+        if not cur.fetchone():
+            raise HTTPException(404, "Discovery job not found")
+        summary = _discover_and_add(cur, companies, queries)
+        summary["proposed_companies"] = len(companies)
+        cur.execute(
+            "UPDATE career_discover_job SET status = 'done', proposal = %s::jsonb, "
+            "summary = %s::jsonb, error = NULL, finished_at = NOW() WHERE id = %s",
+            (json.dumps({"companies": companies, "queries": queries}),
+             json.dumps(summary), int(job_id)),
+        )
+        conn.commit()
+        return {"ok": True, **summary}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        raise HTTPException(500, f"discover result failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+@router.post("/worker/discover/fail")
+def worker_discover_fail(payload: dict = Body(...)):
+    job_id = payload.get("job_id")
+    error = (payload.get("error") or "unknown error")[:1000]
+    if job_id is None:
+        raise HTTPException(400, "job_id is required")
+    conn = _conn()
+    cur = conn.cursor()
+    try:
+        _ensure_agent_schema(cur)
+        cur.execute(
+            "UPDATE career_discover_job SET status = 'error', error = %s, finished_at = NOW() WHERE id = %s",
+            (error, int(job_id)),
+        )
         conn.commit()
         return {"ok": True}
     finally:

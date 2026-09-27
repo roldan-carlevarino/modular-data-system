@@ -170,6 +170,7 @@
         $("srcAdd").addEventListener("click", addSource);
         $("careerSourceList").addEventListener("click", onSourceListClick);
         $("careerSourceList").addEventListener("change", onSourceListChange);
+        $("srcDiscover").addEventListener("click", discoverSources);
         $("oppFetch").addEventListener("click", fetchOpportunities);
         $("oppScore").addEventListener("click", scorePending);
         $("oppRefresh").addEventListener("click", () => loadOpportunities());
@@ -826,6 +827,7 @@
             loadProfile();
             loadSources();
             loadOpportunities();
+            loadDiscoverStatus();
         }
     }
 
@@ -1124,7 +1126,7 @@
                     <input type="checkbox" data-act="toggle" ${s.enabled ? "checked" : ""}>
                 </label>
                 <span class="careers__source-kind">${escapeHtml(s.kind)}</span>
-                <span class="careers__source-slug">${escapeHtml(s.label || s.slug || "—")}</span>
+                <span class="careers__source-slug">${escapeHtml(s.label || s.slug || "—")}${s.discovered ? ` <span class="careers__badge" title="Descubierta por la IA (confianza ${s.confidence ?? "?"})">IA${s.confidence != null ? " " + s.confidence : ""}</span>` : ""}</span>
                 <span class="careers__source-status">${escapeHtml(s.last_status || "never fetched")}</span>
                 <button class="careers__icon-btn" data-act="del" title="Delete">×</button>
             </div>
@@ -1170,6 +1172,65 @@
             loadSources();
         } catch (err) {
             alert(`Delete failed: ${err.message}`);
+        }
+    }
+
+    let discoverPollTimer = null;
+
+    function renderDiscoverStatus(job) {
+        const el = $("srcDiscoverStatus");
+        if (!el) return;
+        if (!job) { el.textContent = ""; return; }
+        if (job.status === "pending" || job.status === "in_progress") {
+            el.textContent = "El agente está buscando empresas nuevas…";
+            return;
+        }
+        if (job.status === "error") {
+            el.textContent = "Falló: " + (job.error || "error");
+            return;
+        }
+        const s = job.summary || {};
+        const added = (s.added || []).length;
+        const rej = (s.rejected || []).length;
+        const q = (s.queries_added || []).length;
+        const names = (s.added || []).map((a) => a.company).slice(0, 8).join(", ");
+        el.textContent = `+${added} fuentes validadas` +
+            (names ? ` (${names}${added > 8 ? "…" : ""})` : "") +
+            (q ? `, +${q} búsquedas` : "") +
+            (rej ? `, ${rej} descartadas` : "");
+    }
+
+    async function loadDiscoverStatus() {
+        try {
+            const r = await api("/careers/discover/status");
+            renderDiscoverStatus(r.job);
+            return r.job;
+        } catch (_) { return null; }
+    }
+
+    async function discoverSources() {
+        const btn = $("srcDiscover");
+        btn.disabled = true;
+        try {
+            await api("/careers/discover", "POST", {});
+            $("srcDiscoverStatus").textContent =
+                "En cola. El worker de tu Mac lo procesará (mantenlo encendido)…";
+            if (discoverPollTimer) clearInterval(discoverPollTimer);
+            let ticks = 0;
+            discoverPollTimer = setInterval(async () => {
+                ticks += 1;
+                const job = await loadDiscoverStatus();
+                const done = job && (job.status === "done" || job.status === "error");
+                if (done || ticks > 60) {
+                    clearInterval(discoverPollTimer);
+                    discoverPollTimer = null;
+                    btn.disabled = false;
+                    if (done && job.status === "done") loadSources();
+                }
+            }, 5000);
+        } catch (e) {
+            $("srcDiscoverStatus").textContent = `No se pudo lanzar: ${e.message}`;
+            btn.disabled = false;
         }
     }
 

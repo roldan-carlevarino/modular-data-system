@@ -661,6 +661,96 @@ def process_score(session):
     return True
 
 
+# ---------------------------------------------------------------------------
+# Careers source discovery: propose employers + search phrases that fit the
+# profile. The worker only PROPOSES; the backend hard-validates every candidate
+# against the live ATS boards before adding anything (so hallucinated slugs and
+# dead companies never make it in).
+# ---------------------------------------------------------------------------
+
+DISCOVER_SYSTEM_PROMPT = (
+    "Eres un headhunter que amplia la lista de fuentes de empleo de un candidato. "
+    "A partir de su PERFIL, propones EMPRESAS REALES y frases de busqueda que "
+    "encajen con lo que busca (data science, machine learning, quant trading, "
+    "quant research, research assistant; nivel internship/new-grad/research). "
+    "Devuelve SOLO JSON con esta forma exacta:\n"
+    "{\n"
+    '  "companies": [string],   // 15-30 nombres de empresas REALES y conocidas\n'
+    '  "queries":   [string]    // 5-10 frases de busqueda cortas en ingles\n'
+    "}\n"
+    "Reglas MUY IMPORTANTES:\n"
+    "- Propon SOLO empresas que existan de verdad y que suelan contratar estos "
+    "perfiles (tech, fintech, IA, trading cuantitativo, laboratorios, hedge funds). "
+    "NO inventes nombres. Un validador comprobara cada empresa en vivo y descartara "
+    "las que no existan, asi que la calidad importa mas que la cantidad.\n"
+    "- Usa el nombre comun de la empresa (ej. 'Jane Street', 'Two Sigma', 'Hudson "
+    "River Trading', 'Scale AI'), no dominios ni URLs.\n"
+    "- NO repitas las empresas ni las queries que ya estan en la lista de conocidas.\n"
+    "- queries: frases cortas tipo 'machine learning intern', 'quant research new grad'.\n"
+    "- Responde SOLO el objeto JSON, sin texto adicional."
+)
+
+
+def _build_discover_prompt(profile_context, known_companies, known_queries):
+    known_c = ", ".join(known_companies[:120]) or "(ninguna)"
+    known_q = ", ".join(known_queries[:40]) or "(ninguna)"
+    return (
+        f"{profile_context}\n\n"
+        f"EMPRESAS YA CONFIGURADAS (no las repitas):\n{known_c}\n\n"
+        f"QUERIES YA CONFIGURADAS (no las repitas):\n{known_q}\n\n"
+        "Propon nuevas empresas reales y nuevas frases de busqueda que encajen "
+        "con el perfil y responde en JSON."
+    )
+
+
+def process_discover(session):
+    """Claim a discovery job, propose companies/queries, let the backend validate.
+    Returns True if a job was handled."""
+    r = session.post(
+        f"{API_BASE}/careers/worker/discover/claim",
+        json={"worker_id": WORKER_ID},
+        timeout=30,
+    )
+    r.raise_for_status()
+    job = r.json().get("job")
+    if not job:
+        return False
+    job_id = job["id"]
+    ctx = job.get("profile_context") or ""
+    known_c = job.get("known_companies") or []
+    known_q = job.get("known_queries") or []
+    print(f"[discover {job_id}] proposing (known: {len(known_c)} companies)")
+    try:
+        out = _run_ollama_json(
+            DISCOVER_SYSTEM_PROMPT,
+            _build_discover_prompt(ctx, known_c, known_q),
+        )
+        body = {
+            "job_id": job_id,
+            "companies": out.get("companies") or [],
+            "queries": out.get("queries") or [],
+        }
+        rr = session.post(
+            f"{API_BASE}/careers/worker/discover/result", json=body, timeout=180,
+        )
+        rr.raise_for_status()
+        summ = rr.json()
+        print(f"[discover {job_id}] added={len(summ.get('added', []))} "
+              f"rejected={len(summ.get('rejected', []))} "
+              f"queries+={len(summ.get('queries_added', []))}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[discover {job_id}] failed: {e}")
+        try:
+            session.post(
+                f"{API_BASE}/careers/worker/discover/fail",
+                json={"job_id": job_id, "error": str(e)[:1000]},
+                timeout=30,
+            )
+        except Exception as e2:  # noqa: BLE001
+            print(f"[warn] could not report discover failure {job_id}: {e2}")
+    return True
+
+
 def main():
     print(f"knowledge-worker starting: api={API_BASE} model={OLLAMA_MODEL} "
           f"embed={EMBED_MODEL} worker_id={WORKER_ID}")
@@ -697,10 +787,12 @@ def main():
                 continue
             try:
                 # Priority: chat turns (human waiting) > careers scoring >
-                # extraction > embed backfill.
+                # source discovery > extraction > embed backfill.
                 handled = process_chat(holder["session"])
                 if not handled:
                     handled = process_score(holder["session"])
+                if not handled:
+                    handled = process_discover(holder["session"])
                 if not handled:
                     handled = process_one(holder["session"])
                 if not handled:

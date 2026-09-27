@@ -50,6 +50,14 @@ def main():
         print("[careers] KN_USERNAME/KN_PASSWORD not set; skipping")
         return
     token = _login()
+    # Enqueue a source-discovery pass so the Mac worker keeps widening the market
+    # coverage over time (the backend validates every proposed board live).
+    try:
+        disc = _post("/careers/discover", token, {})
+        print(f"[careers] discovery job: {disc.get('job_id')} "
+              f"({'reused' if disc.get('already') else 'new'})")
+    except Exception as e:  # noqa: BLE001
+        print(f"[careers] discovery enqueue failed: {e}")
     fetched = _post("/careers/opportunities/fetch", token, {})
     print(f"[careers] fetched: {fetched.get('inserted')} new from "
           f"{fetched.get('sources')} source(s)")

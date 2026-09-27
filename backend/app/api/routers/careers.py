@@ -645,20 +645,23 @@ async def import_linkedin_csv(file: UploadFile = File(...)):
 import html as _html  # noqa: E402  (local import keeps the top of the file lean)
 
 SOURCE_KINDS = {"greenhouse", "lever", "ashby", "smartrecruiters",
-                "remotive", "arbeitnow", "remoteok"}
+                "optiver", "remotive", "arbeitnow", "remoteok"}
 SCORE_LEASE_MINUTES = 10
 _MAX_DESC = 6000
 
-# Keyword pre-filter tuned to the user's target roles: DS/ML/quant internships +
-# research assistant. Substring match on title+description (any of these hits).
+# Keyword pre-filter tuned to the user's target roles: DS/ML/quant + research +
+# internships. Broad, substring-matched (any hit passes); the LLM scoring then
+# judges seniority/fit. Location gate + scoring keep the noise down.
 _TARGET_KEYWORDS = [
-    "data science intern", "data scientist intern",
-    "machine learning intern", "ml intern", "machine learning engineer intern",
-    "quantitative trading", "quantitative trader", "quant trading",
-    "quantitative research", "quantitative researcher", "quant research",
-    "quant intern", "research assistant", "research intern",
-    "research scientist intern",
+    "data scien",                       # data science / data scientist
+    "machine learning", "ml intern", "ml engineer",
+    "quant",                            # quant / quantitative (trader/researcher/dev)
+    "trader", "trading",                # trading desks
+    "research assistant", "research scientist", "research intern",
+    "internship",                       # summer / trader / quant internships
 ]
+# Bump when _TARGET_KEYWORDS changes to re-sync existing sources' filters.
+_KEYWORDS_VERSION = "2"
 
 # Phrases used to actively query aggregators that support server-side search
 # (instead of downloading everything and filtering locally).
@@ -734,6 +737,7 @@ _DEFAULT_SOURCES = [
     {"kind": "greenhouse", "slug": "davinciderivatives", "label": "Da Vinci Derivatives"},
     {"kind": "greenhouse", "slug": "flowtraders", "label": "Flow Traders"},
     {"kind": "greenhouse", "slug": "akunacapital", "label": "Akuna Capital"},
+    {"kind": "greenhouse", "slug": "mavensecuritiesholdingltd", "label": "Maven Securities"},
     # --- Ashby boards ---
     {"kind": "ashby", "slug": "openai", "label": "OpenAI"},
     {"kind": "ashby", "slug": "ramp", "label": "Ramp"},
@@ -747,6 +751,8 @@ _DEFAULT_SOURCES = [
     # --- Lever boards ---
     {"kind": "lever", "slug": "spotify", "label": "Spotify"},
     {"kind": "lever", "slug": "palantir", "label": "Palantir"},
+    # --- Bespoke (custom career APIs) ---
+    {"kind": "optiver", "slug": "", "label": "Optiver"},
     # --- Aggregators (paginated / term-searched, cover the long tail) ---
     {"kind": "remotive", "slug": "", "label": "Remotive"},
     {"kind": "arbeitnow", "slug": "", "label": "Arbeitnow"},
@@ -898,6 +904,29 @@ def _seed_profile_locations(cur):
                     (_TARGET_LOCATIONS,))
 
 
+def _refresh_keywords(cur):
+    """Re-sync every source's keyword filter to the current default set when the
+    keyword version changes (preserves other filter keys like queries/exclude)."""
+    cur.execute("SELECT links FROM career_profile WHERE id = 1")
+    row = cur.fetchone()
+    links = (row[0] if row else None) or {}
+    if isinstance(links, str):
+        links = json.loads(links)
+    if links.get("kw_version") == _KEYWORDS_VERSION:
+        return
+    cur.execute("SELECT id, filters FROM career_source")
+    for sid, filt in cur.fetchall():
+        filt = filt or {}
+        if isinstance(filt, str):
+            filt = json.loads(filt)
+        filt["keywords"] = _TARGET_KEYWORDS
+        cur.execute("UPDATE career_source SET filters = %s::jsonb WHERE id = %s",
+                    (json.dumps(filt), sid))
+    links["kw_version"] = _KEYWORDS_VERSION
+    cur.execute("UPDATE career_profile SET links = %s::jsonb WHERE id = 1",
+                (json.dumps(links),))
+
+
 def migrate():
     """Create the opportunity-agent tables once at startup (called from main.py)."""
     conn = _conn()
@@ -906,6 +935,7 @@ def migrate():
         _ensure_agent_schema(cur)
         _seed_default_sources(cur)
         _seed_profile_locations(cur)
+        _refresh_keywords(cur)
         conn.commit()
         cur.close()
     finally:
@@ -1249,9 +1279,9 @@ def delete_source(sid: int):
 
 # ---------- Market fetchers (public job-board APIs, stdlib only) ----------
 
-def _http_get_json(url: str, timeout: int = 25):
+def _http_get_json(url: str, timeout: int = 25, ua: str = None):
     req = urllib.request.Request(url, headers={
-        "User-Agent": "modular-data-careers/1.0",
+        "User-Agent": ua or "modular-data-careers/1.0",
         "Accept": "application/json",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -1442,6 +1472,28 @@ def _fetch_source(source: dict) -> list:
                     "remote": True,
                     "posted_at": _parse_ts(j.get("date")),
                     "raw": {"tags": j.get("tags")},
+                })
+        elif kind == "optiver":
+            # Optiver publishes on its own site API (no standard ATS). Public feed
+            # returns a featured subset; deduping accumulates roles across cycles.
+            _browser_ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
+            data = _http_get_json("https://www.optiver.com/en/api/v1/jobs",
+                                  ua=_browser_ua)
+            for j in data.get("items", []):
+                href = j.get("href") or ""
+                loc = j.get("location") or ""
+                bits = [j.get("title") or "", j.get("domain") or "", j.get("experience") or "", loc]
+                out.append({
+                    "external_id": f"optiver:{href}",
+                    "title": (j.get("title") or "").strip(),
+                    "company": label or "Optiver",
+                    "location": loc,
+                    "url": ("https://www.optiver.com" + href) if href.startswith("/") else href,
+                    "description": " · ".join(b for b in bits if b),
+                    "remote": False,
+                    "posted_at": None,
+                    "raw": {"domain": j.get("domain"), "experience": j.get("experience")},
                 })
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError, TypeError):
         return []

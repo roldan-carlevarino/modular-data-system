@@ -663,6 +663,18 @@ _TARGET_KEYWORDS = [
 # Bump when _TARGET_KEYWORDS changes to re-sync existing sources' filters.
 _KEYWORDS_VERSION = "2"
 
+# Non-job / evergreen ATS entries to drop by TITLE (events, talent pools, generic
+# "apply anyway" posts). These often pass keyword filters via their description.
+_GLOBAL_EXCLUDE = [
+    "connect with us", "meet us", "meet the team", "talent community",
+    "talent network", "talent pool", "candidate pool", "join our talent",
+    "expression of interest", "general application", "spontaneous application",
+    "open application", "future opportunities", "keep in touch", "stay in touch",
+    "career fair", "info session", "information session", "webinar",
+    "recruiting event", "hiring event", "hackathon", "don't see a role",
+    "dont see a role", "other opportunities", "introduce yourself",
+]
+
 # Phrases used to actively query aggregators that support server-side search
 # (instead of downloading everything and filtering locally).
 _TARGET_QUERIES = [
@@ -927,6 +939,16 @@ def _refresh_keywords(cur):
                 (json.dumps(links),))
 
 
+def _purge_non_jobs(cur):
+    """Delete non-promoted listings whose title is a non-job / evergreen entry."""
+    for pat in _GLOBAL_EXCLUDE:
+        cur.execute(
+            "DELETE FROM career_opportunity "
+            "WHERE promoted_application_id IS NULL AND lower(title) LIKE %s",
+            (f"%{pat}%",),
+        )
+
+
 def migrate():
     """Create the opportunity-agent tables once at startup (called from main.py)."""
     conn = _conn()
@@ -936,6 +958,7 @@ def migrate():
         _seed_default_sources(cur)
         _seed_profile_locations(cur)
         _refresh_keywords(cur)
+        _purge_non_jobs(cur)
         conn.commit()
         cur.close()
     finally:
@@ -1502,6 +1525,10 @@ def _fetch_source(source: dict) -> list:
 
 
 def _passes_filters(opp: dict, filters: dict) -> bool:
+    # Drop non-job / evergreen listings by title regardless of source filters.
+    title = (opp.get("title") or "").lower()
+    if any(x in title for x in _GLOBAL_EXCLUDE):
+        return False
     if not filters:
         return True
     hay = f"{opp.get('title','')} {opp.get('description','')} {opp.get('location','')}".lower()

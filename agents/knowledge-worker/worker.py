@@ -634,7 +634,7 @@ def process_score(session):
     r = session.post(
         f"{API_BASE}/careers/worker/score/claim",
         json={"worker_id": WORKER_ID},
-        timeout=30,
+        timeout=60,
     )
     r.raise_for_status()
     job = r.json().get("job")
@@ -725,7 +725,7 @@ def process_discover(session):
     r = session.post(
         f"{API_BASE}/careers/worker/discover/claim",
         json={"worker_id": WORKER_ID},
-        timeout=30,
+        timeout=60,
     )
     r.raise_for_status()
     job = r.json().get("job")
@@ -863,6 +863,10 @@ def main():
                     holder["session"] = make_session(token)
                     continue
                 print(f"[error] HTTP: {e}")
+                handled = False
+            except (requests.Timeout, requests.ConnectionError) as e:
+                # Transient network blip (backend briefly busy/slow): retry next loop.
+                print(f"[warn] transient network issue, retrying: {type(e).__name__}")
                 handled = False
             except Exception as e:  # noqa: BLE001
                 print(f"[error] {e}")

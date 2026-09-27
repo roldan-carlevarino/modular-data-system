@@ -658,14 +658,69 @@ _TARGET_KEYWORDS = [
     "research scientist intern",
 ]
 
-# Seeded once (only when career_source is empty) so the user's preferred boards
-# exist out of the box. Greenhouse slugs verified to serve DS/ML/quant interns.
+# Phrases used to actively query aggregators that support server-side search
+# (instead of downloading everything and filtering locally).
+_TARGET_QUERIES = [
+    "data science intern", "machine learning intern",
+    "quantitative trading", "quantitative research", "research assistant",
+]
+
+# Hard ceiling of raw items pulled from a single source before local filtering,
+# so a huge board / deep pagination can't blow up memory or the scoring queue.
+_FETCH_CAP = 600
+
+# Seeded once (only when career_source is empty) so the market is covered broadly
+# out of the box. Every slug below was probed live and returns openings; quant
+# firms included because they publish DS/ML/quant roles on these ATS boards.
 _DEFAULT_SOURCES = [
+    # --- Greenhouse boards ---
     {"kind": "greenhouse", "slug": "anthropic", "label": "Anthropic"},
     {"kind": "greenhouse", "slug": "databricks", "label": "Databricks"},
     {"kind": "greenhouse", "slug": "stripe", "label": "Stripe"},
     {"kind": "greenhouse", "slug": "coinbase", "label": "Coinbase"},
     {"kind": "greenhouse", "slug": "robinhood", "label": "Robinhood"},
+    {"kind": "greenhouse", "slug": "figma", "label": "Figma"},
+    {"kind": "greenhouse", "slug": "brex", "label": "Brex"},
+    {"kind": "greenhouse", "slug": "gusto", "label": "Gusto"},
+    {"kind": "greenhouse", "slug": "instacart", "label": "Instacart"},
+    {"kind": "greenhouse", "slug": "reddit", "label": "Reddit"},
+    {"kind": "greenhouse", "slug": "discord", "label": "Discord"},
+    {"kind": "greenhouse", "slug": "dropbox", "label": "Dropbox"},
+    {"kind": "greenhouse", "slug": "cloudflare", "label": "Cloudflare"},
+    {"kind": "greenhouse", "slug": "datadog", "label": "Datadog"},
+    {"kind": "greenhouse", "slug": "mongodb", "label": "MongoDB"},
+    {"kind": "greenhouse", "slug": "elastic", "label": "Elastic"},
+    {"kind": "greenhouse", "slug": "gitlab", "label": "GitLab"},
+    {"kind": "greenhouse", "slug": "twilio", "label": "Twilio"},
+    {"kind": "greenhouse", "slug": "affirm", "label": "Affirm"},
+    {"kind": "greenhouse", "slug": "chime", "label": "Chime"},
+    {"kind": "greenhouse", "slug": "sofi", "label": "SoFi"},
+    {"kind": "greenhouse", "slug": "samsara", "label": "Samsara"},
+    {"kind": "greenhouse", "slug": "flexport", "label": "Flexport"},
+    {"kind": "greenhouse", "slug": "nuro", "label": "Nuro"},
+    {"kind": "greenhouse", "slug": "pinterest", "label": "Pinterest"},
+    {"kind": "greenhouse", "slug": "lyft", "label": "Lyft"},
+    {"kind": "greenhouse", "slug": "asana", "label": "Asana"},
+    {"kind": "greenhouse", "slug": "roblox", "label": "Roblox"},
+    {"kind": "greenhouse", "slug": "point72", "label": "Point72"},
+    {"kind": "greenhouse", "slug": "jumptrading", "label": "Jump Trading"},
+    {"kind": "greenhouse", "slug": "drweng", "label": "DRW"},
+    {"kind": "greenhouse", "slug": "imc", "label": "IMC Trading"},
+    {"kind": "greenhouse", "slug": "janestreet", "label": "Jane Street"},
+    # --- Ashby boards ---
+    {"kind": "ashby", "slug": "openai", "label": "OpenAI"},
+    {"kind": "ashby", "slug": "ramp", "label": "Ramp"},
+    {"kind": "ashby", "slug": "notion", "label": "Notion"},
+    {"kind": "ashby", "slug": "linear", "label": "Linear"},
+    {"kind": "ashby", "slug": "replit", "label": "Replit"},
+    {"kind": "ashby", "slug": "cohere", "label": "Cohere"},
+    {"kind": "ashby", "slug": "character", "label": "Character.AI"},
+    {"kind": "ashby", "slug": "harvey", "label": "Harvey"},
+    {"kind": "ashby", "slug": "sierra", "label": "Sierra"},
+    # --- Lever boards ---
+    {"kind": "lever", "slug": "spotify", "label": "Spotify"},
+    {"kind": "lever", "slug": "palantir", "label": "Palantir"},
+    # --- Aggregators (paginated / term-searched, cover the long tail) ---
     {"kind": "remotive", "slug": "", "label": "Remotive"},
     {"kind": "arbeitnow", "slug": "", "label": "Arbeitnow"},
     {"kind": "remoteok", "slug": "", "label": "RemoteOK"},
@@ -759,12 +814,16 @@ def _ensure_agent_schema(cur):
 
 
 def _seed_default_sources(cur):
-    """Insert the user's preferred sources once, only if none exist yet (so a
-    later manual deletion is not undone on the next startup)."""
-    cur.execute("SELECT COUNT(*) FROM career_source")
-    if cur.fetchone()[0] > 0:
-        return
+    """Insert any preferred source that isn't already configured (matched by
+    kind+slug). Runs at startup so newly added defaults appear on redeploy; a
+    default the user deletes will reappear, which is intended for this list."""
     for s in _DEFAULT_SOURCES:
+        cur.execute(
+            "SELECT 1 FROM career_source WHERE kind = %s AND slug = %s LIMIT 1",
+            (s["kind"], s["slug"]),
+        )
+        if cur.fetchone():
+            continue
         cur.execute(
             "INSERT INTO career_source (kind, slug, label, enabled, filters) "
             "VALUES (%s, %s, %s, TRUE, %s::jsonb)",
@@ -1211,38 +1270,65 @@ def _fetch_source(source: dict) -> list:
                     "raw": {"id": j.get("id"), "department": j.get("department")},
                 })
         elif kind == "remotive":
-            q = (source.get("filters") or {}).get("search") or ""
-            url = "https://remotive.com/api/remote-jobs?limit=50"
-            if q:
-                url += "&search=" + urllib.parse.quote(q)
-            data = _http_get_json(url)
-            for j in data.get("jobs", []):
-                out.append({
-                    "external_id": f"remotive:{j.get('id')}",
-                    "title": j.get("title"), "company": j.get("company_name"),
-                    "location": j.get("candidate_required_location") or "Remote",
-                    "url": j.get("url"),
-                    "description": _strip_html(j.get("description") or ""),
-                    "remote": True,
-                    "posted_at": _parse_ts(j.get("publication_date")),
-                    "raw": {"category": j.get("category")},
-                })
+            # Active term search: hit the API once per target phrase so we pull
+            # relevant postings deep in the catalog, not just the newest 50.
+            queries = (source.get("filters") or {}).get("queries") or _TARGET_QUERIES
+            seen = set()
+            for q in queries:
+                if len(out) >= _FETCH_CAP:
+                    break
+                try:
+                    data = _http_get_json(
+                        "https://remotive.com/api/remote-jobs?limit=100&search="
+                        + urllib.parse.quote(q)
+                    )
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+                    continue
+                for j in data.get("jobs", []):
+                    ext = f"remotive:{j.get('id')}"
+                    if ext in seen:
+                        continue
+                    seen.add(ext)
+                    out.append({
+                        "external_id": ext,
+                        "title": j.get("title"), "company": j.get("company_name"),
+                        "location": j.get("candidate_required_location") or "Remote",
+                        "url": j.get("url"),
+                        "description": _strip_html(j.get("description") or ""),
+                        "remote": True,
+                        "posted_at": _parse_ts(j.get("publication_date")),
+                        "raw": {"category": j.get("category")},
+                    })
         elif kind == "arbeitnow":
-            data = _http_get_json("https://www.arbeitnow.com/api/job-board-api")
-            for j in data.get("data", []):
-                out.append({
-                    "external_id": f"arbeitnow:{j.get('slug')}",
-                    "title": j.get("title"), "company": j.get("company_name"),
-                    "location": j.get("location") or "",
-                    "url": j.get("url"),
-                    "description": _strip_html(j.get("description") or ""),
-                    "remote": bool(j.get("remote")),
-                    "posted_at": _parse_ts(j.get("created_at")),
-                    "raw": {"tags": j.get("tags")},
-                })
+            # Walk pages until the feed is exhausted or the cap is reached.
+            page = 1
+            while len(out) < _FETCH_CAP and page <= 20:
+                try:
+                    data = _http_get_json(
+                        f"https://www.arbeitnow.com/api/job-board-api?page={page}"
+                    )
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+                    break
+                rows = data.get("data") or []
+                if not rows:
+                    break
+                for j in rows:
+                    out.append({
+                        "external_id": f"arbeitnow:{j.get('slug')}",
+                        "title": j.get("title"), "company": j.get("company_name"),
+                        "location": j.get("location") or "",
+                        "url": j.get("url"),
+                        "description": _strip_html(j.get("description") or ""),
+                        "remote": bool(j.get("remote")),
+                        "posted_at": _parse_ts(j.get("created_at")),
+                        "raw": {"tags": j.get("tags")},
+                    })
+                page += 1
         elif kind == "remoteok":
             data = _http_get_json("https://remoteok.com/api")
             for j in data:
+                if len(out) >= _FETCH_CAP:
+                    break
                 if not isinstance(j, dict) or not j.get("id"):
                     continue
                 out.append({

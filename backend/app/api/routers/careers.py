@@ -681,9 +681,11 @@ _DISCOVER_KINDS = ["greenhouse", "lever", "ashby"]
 # A board only auto-activates if at least this many of its live titles look like
 # a relevant role (hard evidence the board actually posts what the user wants).
 _DISCOVER_MIN_MATCHES = 1
-# Wall-clock budget for one discovery validation pass (keeps the HTTP request
-# well under the worker's timeout even if many boards are probed).
-_DISCOVER_BUDGET_SEC = 90
+# Wall-clock budget for one discovery validation pass. Generous by design so we
+# can validate many companies; uvicorn has no server-side request timeout.
+_DISCOVER_BUDGET_SEC = float(os.getenv("DISCOVER_BUDGET_SEC", "600"))
+# Max companies validated per pass (bounds only pathological LLM output).
+_DISCOVER_MAX_COMPANIES = int(os.getenv("DISCOVER_MAX_COMPANIES", "80"))
 # Broad hints used ONLY to gauge a discovered board's relevance from job titles.
 _DISCOVER_TITLE_HINTS = [
     "intern", "research assistant", "research scientist", "quant",
@@ -1531,7 +1533,7 @@ def _discover_and_add(cur, companies, queries) -> dict:
     added, rejected = [], []
     seen_names = set()
     deadline = time.monotonic() + _DISCOVER_BUDGET_SEC
-    for raw in (companies or [])[:25]:
+    for raw in (companies or [])[:_DISCOVER_MAX_COMPANIES]:
         if time.monotonic() > deadline:
             break
         name = str(raw or "").strip()

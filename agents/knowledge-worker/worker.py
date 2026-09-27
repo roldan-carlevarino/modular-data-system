@@ -21,6 +21,7 @@ Config via environment variables:
   MAX_CHUNKS     Max chunks per prompt       (default 8)
   CAREERS_AUTO   1 to autonomously drive the careers pipeline (default 1)
   CAREERS_INTERVAL_SEC  Seconds between careers cycles (default 21600 = 6h)
+  DISCOVER_RESULT_TIMEOUT  Seconds to wait for the backend to validate boards (default 900)
   VOICE_ENABLED  1 to run the wake-word voice mode on this machine (default 0);
                  see voice_mode.py for its own config + requirements-voice.txt.
 
@@ -55,6 +56,9 @@ MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "8"))
 # button. Interval in seconds (default 6h).
 CAREERS_AUTO = os.environ.get("CAREERS_AUTO", "1") == "1"
 CAREERS_INTERVAL_SEC = float(os.environ.get("CAREERS_INTERVAL_SEC", "21600"))
+# Discovery validates many company boards live on the backend; give it plenty of
+# time (must exceed the backend's DISCOVER_BUDGET_SEC).
+DISCOVER_RESULT_TIMEOUT = float(os.environ.get("DISCOVER_RESULT_TIMEOUT", "900"))
 
 # Voice mode (optional): an always-on wake-word listener on this machine's mic.
 # When it hears the wake word it pauses background jobs (so Ollama is free) and
@@ -744,7 +748,8 @@ def process_discover(session):
             "queries": out.get("queries") or [],
         }
         rr = session.post(
-            f"{API_BASE}/careers/worker/discover/result", json=body, timeout=300,
+            f"{API_BASE}/careers/worker/discover/result", json=body,
+            timeout=DISCOVER_RESULT_TIMEOUT,
         )
         rr.raise_for_status()
         summ = rr.json()

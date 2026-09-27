@@ -645,7 +645,8 @@ async def import_linkedin_csv(file: UploadFile = File(...)):
 import html as _html  # noqa: E402  (local import keeps the top of the file lean)
 
 SOURCE_KINDS = {"greenhouse", "lever", "ashby", "smartrecruiters",
-                "optiver", "site", "remotive", "arbeitnow", "remoteok"}
+                "optiver", "site", "themuse", "jobicy",
+                "remotive", "arbeitnow", "remoteok"}
 SCORE_LEASE_MINUTES = 10
 _MAX_DESC = 6000
 
@@ -685,6 +686,10 @@ _TARGET_QUERIES = [
 # Default location gate applied to every fetched opening (a posting is kept if it
 # is remote or its location matches one of these). Overridden by the profile.
 _TARGET_LOCATIONS = ["amsterdam", "remote", "madrid", "barcelona"]
+
+# Niche aggregator query knobs (no API key needed).
+_THEMUSE_CATEGORIES = ["Data Science", "Data and Analytics", "Science and Research"]
+_JOBICY_INDUSTRIES = ["data-science", "engineering"]
 
 # Hard ceiling of raw items pulled from a single source before local filtering,
 # so a huge board / deep pagination can't blow up memory or the scoring queue.
@@ -773,6 +778,8 @@ _DEFAULT_SOURCES = [
     {"kind": "remotive", "slug": "", "label": "Remotive"},
     {"kind": "arbeitnow", "slug": "", "label": "Arbeitnow"},
     {"kind": "remoteok", "slug": "", "label": "RemoteOK"},
+    {"kind": "themuse", "slug": "", "label": "The Muse"},
+    {"kind": "jobicy", "slug": "", "label": "Jobicy"},
 ]
 
 _AGENT_SCHEMA_READY = False
@@ -1531,6 +1538,69 @@ def _fetch_source(source: dict) -> list:
                     "posted_at": _parse_ts(j.get("date")),
                     "raw": {"tags": j.get("tags")},
                 })
+        elif kind == "themuse":
+            cats = (source.get("filters") or {}).get("categories") or _THEMUSE_CATEGORIES
+            seen = set()
+            for cat in cats:
+                for page in range(0, 3):
+                    if len(out) >= _FETCH_CAP:
+                        break
+                    try:
+                        data = _http_get_json(
+                            "https://www.themuse.com/api/public/jobs?page=%d&category=%s"
+                            % (page, urllib.parse.quote(cat))
+                        )
+                    except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+                        break
+                    results = data.get("results") or []
+                    if not results:
+                        break
+                    for j in results:
+                        ext = f"themuse:{j.get('id')}"
+                        if ext in seen:
+                            continue
+                        seen.add(ext)
+                        locs = ", ".join(l.get("name", "") for l in (j.get("locations") or []))
+                        out.append({
+                            "external_id": ext,
+                            "title": j.get("name"),
+                            "company": (j.get("company") or {}).get("name"),
+                            "location": locs,
+                            "url": (j.get("refs") or {}).get("landing_page"),
+                            "description": _strip_html(j.get("contents") or ""),
+                            "remote": "remote" in locs.lower() or "flexible" in locs.lower(),
+                            "posted_at": _parse_ts(j.get("publication_date")),
+                            "raw": {"levels": [lv.get("name") for lv in (j.get("levels") or [])]},
+                        })
+        elif kind == "jobicy":
+            inds = (source.get("filters") or {}).get("industries") or _JOBICY_INDUSTRIES
+            seen = set()
+            for ind in inds:
+                if len(out) >= _FETCH_CAP:
+                    break
+                try:
+                    data = _http_get_json(
+                        "https://jobicy.com/api/v2/remote-jobs?count=50&industry="
+                        + urllib.parse.quote(ind)
+                    )
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError):
+                    continue
+                for j in data.get("jobs", []):
+                    ext = f"jobicy:{j.get('id') or j.get('url')}"
+                    if ext in seen:
+                        continue
+                    seen.add(ext)
+                    out.append({
+                        "external_id": ext,
+                        "title": j.get("jobTitle"),
+                        "company": j.get("companyName"),
+                        "location": j.get("jobGeo") or "Remote",
+                        "url": j.get("url"),
+                        "description": _strip_html(j.get("jobDescription") or j.get("jobExcerpt") or ""),
+                        "remote": True,
+                        "posted_at": _parse_ts(j.get("pubDate")),
+                        "raw": {"type": j.get("jobType")},
+                    })
         elif kind == "optiver":
             # Optiver publishes on its own site API (no standard ATS). Public feed
             # returns a featured subset; deduping accumulates roles across cycles.
